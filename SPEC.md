@@ -71,29 +71,33 @@ The workspace label is above the top card of its group.
 
 ### Workspace switch animation
 
-When the workspace of the monitor changes (keyboard, bar, card click), each window flies from where it is drawn to where it goes:
+Two kinds of switch, with different owners of the animation:
 
-- Windows of the new workspace fly from their card to their tile in the focus area.
-- Windows of the old workspace fly from their tile to their new card in a band.
-- The other cards slide to their new places in the bands.
+| Switch | Focus area | Bands |
+|--------|------------|-------|
+| Keyboard, bar, anything the plugin did not start | Hyprland animates the real windows: the theme's workspace curve and speed, style `workspaceStyle` (`slidefade 10%`). | Cards slide to their new places on the spring. Cards of the old workspace fade and scale in; cards of the new workspace fade and scale out. |
+| Card click (or `flyTo` over IPC) | The Exposé flight: windows fly between their cards and their tiles. | Same as above. |
 
-The plugin cannot move real windows. It flies a ghost (a live `ScreencopyView`) per window on the Overlay layer. Each window on the monitor has a ghost for as long as the mode is on, hidden and capturing: a new `ScreencopyView` takes a few hundred ms to get its first frame, so a ghost made at switch time flew empty. Hyprland switches the workspace at once underneath. A wallpaper backdrop covers the tiling area (not the bar) until the ghosts land. Then ghosts and backdrop go in one frame and show the real windows and cards under them.
+Hyprland owns the real windows, so a keyboard switch has no copies and no hand-off: every frame of the focus area is real, with its border, shadow and blur. A full `slide` would move windows across the whole monitor, over the bands (windows are drawn above them); `slidefade 10%` stays mostly in the focus area.
 
-1. On `activeWorkspaceChanged` of the monitor, the plugin reads the current rects: tiles from the cache, cards and ghosts from their live items (a card that is still sliding starts from where it is).
-2. It relays out at once from the cached geometry. A hidden workspace can have old tiling, so the incoming targets can be wrong.
-3. The refresh 80 ms later gives the real tiles. The ghosts retarget in flight.
-4. When every ghost is on its target to within half a pixel, two checks in a row (at least 120 ms, at most 1.5 s), the ghosts hand off. Qt does not update `running` for an animation driven by a `Behavior`, so landing is measured, not read.
+#### The Exposé flight
 
-The real windows' decorations reach past the backdrop: the shadow (60 px range) into the bands and under the translucent bar, and the 1 px border of a window tiled flush against the band (smart gaps: one window, gaps 0). So:
+The plugin cannot move real windows. It flies a ghost (a live `ScreencopyView`) per window on the Overlay layer. Each window on the monitor has a ghost for as long as the mode is on, hidden and capturing: a new `ScreencopyView` takes a few hundred ms to get its first frame, so a ghost made at switch time flew empty.
 
-- Windows in the bands have `no_shadow` while the mode is on (`hl.dsp.window.set_prop`). They are hidden, so nothing changes on screen. A window arrives in the focus area without a shadow and gets it back at the hand-off (`value = "unset"`, so a window rule's `no_shadow` stays).
-- The backdrop reaches `coverBleed` (2 px) into each band to cover the border.
+The plugin starts this switch, so it gets ahead of Hyprland:
 
-The mode turning off or the plugin unloading gives all shadows back.
+1. `flyTo` puts the wallpaper backdrop up over the tiling area, with the ghosts of the current focus windows on their tiles: the screen looks the same.
+2. Two frames later (34 ms), one `hyprctl --batch`: `no_shadow` on the windows of the target workspace, Hyprland's workspace animation off, the focus dispatch. Hyprland switches at once, under the backdrop.
+3. On `activeWorkspaceChanged`, `beginSwitch` reads the cards' live rects, relays out from the cached geometry and flies every ghost: outgoing from their tiles to their new cards, incoming from their cards to their tiles. A hidden workspace can have old tiling; the refresh 80 ms later retargets the ghosts in flight.
+4. When every ghost is on its target to within half a pixel, two checks in a row (at least 120 ms, at most 1.5 s), the ghosts and backdrop go in one frame. Qt does not update `running` for an animation driven by a `Behavior`, so landing is measured, not read. The shadows and Hyprland's workspace animation (`workspaceStyle`) come back.
 
-A switch during a switch keeps the ghosts in flight and retargets them; the springs keep their velocity. No animation when the old or new workspace has a fullscreen window, or during a card drag.
+The real windows' decorations reach past the backdrop: the shadow (60 px range) into the bands and under the translucent bar, and the 1 px border of a window tiled flush against the band (smart gaps: one window, gaps 0). Hence the `no_shadow` during the flight (`value = "unset"` afterwards, so a window rule's `no_shadow` stays), and the backdrop reaching `coverBleed` (2 px) into each band.
 
-While the mode is on, Hyprland's workspace slide is replaced by a 150 ms fade that starts very slowly (`hl.animation({ leaf = "workspaces", enabled = true, speed = 1.5, bezier = "easeInOutCubic", style = "fade" })` through `hyprctl eval`). Turning it off is not enough: Hyprland shows the new workspace one frame before the plugin's first frame, a visible flash. With the fade, the new workspace is under 1% visible on that frame, and from the next frame on the backdrop hides the rest of the fade. The plugin reads the slide settings first from `hyprctl animations -j` and writes them back when the mode turns off or the plugin unloads. If it could not read them, it runs `hyprctl reload config-only`.
+No flight when the current workspace has a fullscreen window, during a card drag, or during another flight: the click then just focuses the window.
+
+#### Hyprland's workspace animation
+
+When the mode turns on, the plugin reads the theme's workspace animation from `hyprctl animations -j`, keeps it to restore, and sets the same curve and speed with style `workspaceStyle` (`hyprctl eval`). A flight turns it off for its own switch and back on at the landing. The mode turning off or the plugin unloading writes the theme's animation back; if it could not be read, the plugin runs `hyprctl reload config-only`.
 
 ### Thumbnails
 
@@ -106,7 +110,7 @@ A card without a frame yet shows the window class on the theme background.
 | Action | Result |
 |--------|--------|
 | Hover | Accent border and window title. |
-| Click | Focus the window. Hyprland goes to its workspace. That workspace leaves the periphery and the previous workspace enters it. |
+| Click | Focus the window with the Exposé flight (see [The Exposé flight](#the-exposé-flight)). Hyprland goes to its workspace. That workspace leaves the periphery and the previous workspace enters it. |
 | Drag, drop in the focus area | Move the window to the current workspace and focus it. Dwindle tiles it next to the window under the pointer. |
 | Drag, drop on another group | Move the window to the workspace of that group. |
 | Drag, drop on empty band space | Move the window to the lowest free workspace id. |
@@ -168,6 +172,9 @@ The plugin has an `IpcHandler` (needs `import Quickshell.Io`):
 ```bash
 # Drop a window at global pixel position (x, y). Ignored outside the bands or when the mode is off.
 omarchy-shell stef.periphery dropWindow 0x56c7bf955960 2300 300
+
+# Go to a window the way a card click does: the Exposé flight.
+omarchy-shell stef.periphery flyTo 0x56c7bf955960
 ```
 
 The shell toggle passes an optional payload to `open()`:
@@ -230,7 +237,8 @@ Durations are given at `animSpeed: 1`.
 | `groupGap` | `Style.space(20)` | Space between groups. |
 | `maxStretch` | `6` | Maximum vertical stretch of a group's position map. |
 | `animSpeed` | `1` | Global animation speed. `0.25` plays all animations 4× slower (to inspect them), `2` twice as fast. Scales every duration, the switch timeouts and the springs. |
-| `slideDuration` | `320` | Card fade-in time in ms. |
+| `workspaceStyle` | `slidefade 10%` | Hyprland's workspace animation style while the mode is on (keyboard switches), with the theme's curve and speed. |
+| `slideDuration` | `320` | Card fade-in and fade-out time in ms (opacity and scale). |
 | `fadeDuration` | `150` | Ghost, drop outline and drag grow time in ms. |
 | `springStrength` | `11.2` | Qt `SpringAnimation.spring` for cards and ghosts. Matches the theme spring `spatial_default` (stiffness 700 × 16 ms step). |
 | `springDamping` | `0.65` | Qt `SpringAnimation.damping`. With `11.2`: ~340 ms, no overshoot. Lower is bouncier. Below `animSpeed` 1 it gets up to 22% extra: Qt steps springs in fixed 16 ms ticks that damp the overshoot at normal speed, and slow motion would otherwise overshoot ~2%. |
@@ -250,8 +258,8 @@ Colours and fonts come from the theme `[menu]` tokens (`Color.menu.*`, `Style.*`
 - **One monitor.** The mode uses the monitor that has focus when it turns on. It does not follow a monitor focus change: the bands keep showing the workspaces around that monitor's active workspace. Multi-monitor is not tested.
 - **Fullscreen** windows cover the full monitor, bands included.
 - **Narrow bands.** On a 16:9 monitor the bands are narrow (380 px at 5:4). The solver stacks cards vertically. A wider monitor or a smaller ratio gives larger cards.
-- **Hyprland fade while on.** `hyprctl reload` while the mode is on turns the slide back on under the ghosts. Toggle the mode off and on.
-- **Switch starts a frame late.** Hyprland shows the new workspace before the plugin gets the event (~8 ms) and draws its first frame. The slow-start fade hides that frame; see [Workspace switch animation](#workspace-switch-animation).
+- **Hyprland reload while on.** `hyprctl reload` while the mode is on puts the theme's workspace slide back (a full slide crosses the bands). Toggle the mode off and on.
+- **Only clicks fly.** A switch the plugin did not start reaches it ~8 ms after Hyprland has switched, too late to put a backdrop up, so keyboard switches are Hyprland's animation. `flyTo` over IPC can bind the flight to keys.
 - **ScreencopyView does not blend.** A `ScreencopyView` overwrites what is under it with the window's own pixels and alpha. Over the backdrop, a translucent window (foot) made the Overlay surface translucent, and the real window behind showed through as a faint second copy; inside a ghost it wiped the blur patch. The `ScreencopyView` itself has `layer.enabled: true`: it renders alone into a texture that is drawn with normal blending. A layer on a parent item does not help, as the overwrite then happens inside that layer.
 - **Hand-off border and shadow.** Ghosts have no Hyprland border or shadow. Both show when the ghosts hand off.
 - **No drop outline for real-window drags.** See [Drag of a real window into a band](#drag-of-a-real-window-into-a-band).
@@ -279,7 +287,7 @@ Manual checks:
 6. Switch workspace. Incoming windows fly from their cards to their tiles, outgoing ones to their new cards. No double image at the hand-off.
 7. Switch fast between two workspaces. Ghosts retarget, nothing stays on screen.
 8. `hyprctl getprop address:<band window> no_shadow` is `true`, and `false` for focus windows. After the mode turns off, `false` for all (or the window rule's value).
-9. `hyprctl animations -j | jq '.[0][] | select(.name=="workspaces")'`: `style: fade`, `speed: 1.5` while on, the theme's slide after the mode turns off.
+9. `hyprctl animations -j | jq '.[0][] | select(.name=="workspaces")'`: `style: slidefade 10%` with the theme's curve while on, the theme's slide after the mode turns off.
 
 ## Out of scope
 

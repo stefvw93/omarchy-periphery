@@ -64,6 +64,10 @@ Item {
   property bool transitioning: false
   property double switchStarted: 0
   property int landedTicks: 0
+  // A card-click flight is running (flight), or set up and waiting for
+  // Hyprland to switch (flightPending).
+  property bool flight: false
+  property bool flightPending: false
   // Address -> true while a ghost flies for that window; its card waits.
   property var ghosted: ({})
   // Resolved wallpaper file for the backdrop.
@@ -71,15 +75,20 @@ Item {
   // Hyprland's own workspace slide is off while the mode is on; this holds
   // the Lua that turns it back on.
   property bool hyprSlideOff: false
-  // easeInOutCubic is one of Omarchy's default curves; speed 1.5 = 150 ms.
-  readonly property string hyprSwitchFade: 'hl.animation({ leaf = "workspaces", enabled = true, speed = 1.5, bezier = "easeInOutCubic", style = "fade" })'
+  // While the mode is on, Hyprland animates workspace switches itself, with
+  // the theme's curve and speed but this style: a short slide stays mostly
+  // inside the focus area (a full slide would cross the bands, as windows
+  // are drawn above them).
+  readonly property string workspaceStyle: "slidefade 10%"
+  // The hl.animation call for that, built from the theme's animation.
+  property string hyprModeLua: 'hl.animation({ leaf = "workspaces", enabled = true, speed = 3, bezier = "default", style = "' + workspaceStyle + '" })'
+  readonly property string hyprOffLua: 'hl.animation({ leaf = "workspaces", enabled = false })'
   property string hyprSlideRestore: ""
-  // Address -> true for windows we turned the shadow off for. Band windows
-  // are hidden, so they lose nothing; a window then arrives in the focus
-  // area without a shadow showing ahead of it, and gets it back on landing.
+  // Address -> true for windows we turned the shadow off for, during a
+  // card-click flight: the windows of the target workspace, whose shadows
+  // would show past the backdrop ahead of their ghosts (they are hidden
+  // until the switch, so they lose nothing).
   property var shadowless: ({})
-  // Set while a switch relays out, before it knows whether ghosts fly.
-  property bool holdShadows: false
 
   property color background: Color.menu.background
   property color foreground: Color.menu.text
@@ -191,24 +200,6 @@ Item {
     root.restoreShadows()
   }
 
-  function setShadow(address, on) {
-    Hyprland.dispatch('hl.dsp.window.set_prop({ window = "address:' + address
-      + '", prop = "no_shadow", value = "' + (on ? "unset" : "1") + '" })')
-  }
-
-  // Band windows shadowless, focus windows back to their own setting
-  // ("unset" keeps a window rule's no_shadow). Waits for a switch to land.
-  function syncShadows() {
-    if (!root.opened || root.transitioning || root.holdShadows) return
-    var next = {}
-    for (var a in root.winData) {
-      next[a] = true
-      if (!root.shadowless[a]) root.setShadow(a, false)
-    }
-    for (var f in root.focusRects) if (root.shadowless[f]) root.setShadow(f, true)
-    root.shadowless = next
-  }
-
   // Also runs on plugin unload, when the dispatch socket may already be
   // gone, so it goes through hyprctl.
   function restoreShadows() {
@@ -219,12 +210,8 @@ Item {
     if (batch.length > 0) Quickshell.execDetached(["hyprctl", "--batch", batch.join(" ; ")])
   }
 
-  // Our ghosts animate the switch; Hyprland's slide would run underneath.
-  // Off is not enough: Hyprland shows the new workspace one frame before
-  // our first frame, a visible flash. A short fade that starts very slowly
-  // instead shows it under 1% on that frame; from the next frame on the
-  // backdrop hides the rest of the fade. Reads the current animation first
-  // so it can be put back.
+  // Reads the theme's workspaces animation, so it can be put back, and
+  // switches it to workspaceStyle with the same curve and speed.
   function disableHyprSlide() {
     if (root.hyprSlideOff) return
     root.hyprSlideOff = true
@@ -239,19 +226,20 @@ Item {
     else Quickshell.execDetached(["hyprctl", "reload", "config-only"])
   }
 
-  // `hyprctl animations -j` entry -> the hl.animation call that recreates it.
-  function slideRestoreLua(json) {
+  // `hyprctl animations -j` entry -> the hl.animation call that recreates
+  // it, or with `style` replaced.
+  function slideRestoreLua(json, style) {
     var lists = JSON.parse(json)
     var all = Array.isArray(lists[0]) ? lists[0] : lists
     for (var i = 0; i < all.length; i++) {
       var a = all[i]
       if (a.name !== "workspaces") continue
-      if (!a.enabled) return 'hl.animation({ leaf = "workspaces", enabled = false })'
+      if (!a.enabled && !style) return root.hyprOffLua
       var parts = ['leaf = "workspaces"', "enabled = true", "speed = " + a.speed]
       var curve = String(a.bezier || "")
       if (curve.indexOf("spring:") === 0) parts.push('spring = "' + curve.slice(7) + '"')
       else if (curve) parts.push('bezier = "' + curve + '"')
-      if (a.style) parts.push('style = "' + a.style + '"')
+      if (style || a.style) parts.push('style = "' + (style || a.style) + '"')
       return "hl.animation({ " + parts.join(", ") + " })"
     }
     return ""
@@ -259,10 +247,15 @@ Item {
 
   Process {
     id: slideProc
-    command: ["bash", "-c", "hyprctl animations -j && hyprctl eval " + Util.shellQuote(root.hyprSwitchFade) + " >/dev/null"]
+    command: ["hyprctl", "animations", "-j"]
     stdout: StdioCollector {
       onStreamFinished: {
-        try { root.hyprSlideRestore = root.slideRestoreLua(text) } catch (e) { root.hyprSlideRestore = "" }
+        try {
+          root.hyprSlideRestore = root.slideRestoreLua(text)
+          var mode = root.slideRestoreLua(text, root.workspaceStyle)
+          if (mode) root.hyprModeLua = mode
+        } catch (e) { root.hyprSlideRestore = "" }
+        if (root.hyprSlideOff) Quickshell.execDetached(["hyprctl", "eval", root.hyprModeLua])
       }
     }
     // The mode went off before the slide was disabled: put it back now.
@@ -296,6 +289,49 @@ Item {
 
   function activateWindow(address) {
     Hyprland.dispatch('hl.dsp.focus({ window = "address:' + address + '" })')
+  }
+
+  // Card click: the Exposé flight. Unlike a keyboard switch, the plugin
+  // starts this one, so it can get ahead of Hyprland: it puts the backdrop
+  // up with ghosts of the current focus windows on their tiles (the screen
+  // looks the same), waits until that is on screen, then turns Hyprland's
+  // workspace animation off for this switch and switches. beginSwitch flies
+  // the ghosts; finishSwitch turns the animation back on.
+  function flyTo(address) {
+    var ws = root.targetMonitor ? root.targetMonitor.activeWorkspace : null
+    if (!root.opened || root.dragAddress !== "" || root.transitioning || (ws && ws.hasFullscreen)) {
+      root.activateWindow(address)
+      return
+    }
+    wallBlurTex.scheduleUpdate()
+    var ghosted = {}
+    for (var a in root.focusRects) {
+      if (!root.ghostItems[a]) continue
+      root.ghostItems[a].launch(root.focusRects[a])
+      ghosted[a] = true
+    }
+    root.ghosted = ghosted
+    root.flight = true
+    root.flightPending = true
+    root.transitioning = true
+    root.switchStarted = Date.now()
+    // The target workspace's windows lose their shadow until the landing.
+    var target = root.winData[address] ? root.winData[address].wsId : -1
+    var shadowless = {}
+    for (var w in root.winData) if (root.winData[w].wsId === target) shadowless[w] = true
+    root.shadowless = shadowless
+    flightTimer.address = address
+    flightTimer.restart()
+  }
+
+  Timer {
+    id: flightTimer
+    property string address: ""
+    // Two frames at 60 Hz: the backdrop is on screen before Hyprland switches.
+    interval: 34
+    onTriggered: Quickshell.execDetached(["hyprctl", "--batch", Object.keys(root.shadowless).map(function(a) {
+        return 'dispatch hl.dsp.window.set_prop({ window = "address:' + a + '", prop = "no_shadow", value = "1" })'
+      }).concat(["eval " + root.hyprOffLua, 'dispatch hl.dsp.focus({ window = "address:' + address + '" })']).join(" ; ")])
   }
 
   // The workspace shown in the focus area: the target monitor's, not the
@@ -353,6 +389,11 @@ Item {
   // (Hyprland focuses the window it drags) and the cursor position.
   IpcHandler {
     target: "stef.periphery"
+
+    // Goes to a window the way a card click does (the Exposé flight).
+    function flyTo(address: string): void {
+      root.flyTo(root.normalizeAddress(address))
+    }
 
     function dropWindow(address: string, x: string, y: string): void {
       if (!root.opened) return
@@ -462,10 +503,9 @@ Item {
     placeSide(right.map(function(id) { return byWs[id] }), root.monW - root.sideW + root.bandMargin, wins, headers)
     root.winData = wins
     root.headers = headers
-    syncModel(slots, Object.keys(wins))
+    syncSlots(Object.keys(wins))
     // Ghosts for every window on the monitor, band or focus area.
     syncModel(ghosts, Object.keys(wins).concat(Object.keys(focus)))
-    syncShadows()
   }
 
   // Expose-style placement that keeps windows near their real relative
@@ -617,6 +657,24 @@ Item {
 
   ListModel { id: slots }
 
+  // Cards: a card for a new band window is added; a card whose window left
+  // the bands is not removed here but fades out first and then removes
+  // itself (removeSlot). A window back before that just fades in again.
+  function syncSlots(addresses) {
+    for (var j = 0; j < addresses.length; j++) {
+      var found = false
+      for (var k = 0; k < slots.count; k++)
+        if (slots.get(k).address === addresses[j]) found = true
+      if (!found) slots.append({ address: addresses[j] })
+    }
+  }
+
+  function removeSlot(address) {
+    if (root.winData[address]) return
+    for (var i = slots.count - 1; i >= 0; i--)
+      if (slots.get(i).address === address) slots.remove(i)
+  }
+
   function liveRect(item) {
     return { x: item.x, y: item.y, w: item.width, h: item.height }
   }
@@ -627,16 +685,20 @@ Item {
   // band. The refresh that follows the switch retargets ghosts whose real
   // tiles differ from the cache (hidden workspaces keep their old tiling).
   function beginSwitch() {
-    if (!root.opened || root.dragAddress !== "") return
-    wallBlurTex.scheduleUpdate()
+    if (!root.opened) return
+    // A switch the plugin didn't start (keyboard, bar): Hyprland animates the
+    // focus area; the cards move to their new places right away.
+    if (!root.flightPending) {
+      root.rebuild()
+      return
+    }
+    root.flightPending = false
     var oldFocus = root.focusRects
     var from = {}
     for (var a in oldFocus) from[a] = oldFocus[a]
     for (var c in root.cardItems) if (root.cardItems[c].visible) from[c] = root.liveRect(root.cardItems[c])
 
-    root.holdShadows = true
     root.rebuild()
-    root.holdShadows = false
 
     var ws = root.targetMonitor ? root.targetMonitor.activeWorkspace : null
     var fullscreen = ws && ws.hasFullscreen
@@ -648,20 +710,20 @@ Item {
       .concat(Object.keys(root.focusRects).filter(function(addr) { return !oldFocus[addr] }))
     for (var i = 0; i < crossing.length; i++) {
       var addr = crossing[i]
-      // A window already in flight keeps its ghost, which retargets.
+      // The outgoing ghosts are up already, on their tiles.
       if (ghosted[addr] || !from[addr] || !root.ghostItems[addr]) continue
       root.ghostItems[addr].launch(from[addr])
       ghosted[addr] = true
     }
     root.ghosted = ghosted
-    if (Object.keys(ghosted).length > 0) {
-      root.transitioning = true
-      root.switchStarted = Date.now()
-    } else root.syncShadows()
+    for (var g in ghosted) if (root.ghostItems[g]) root.ghostItems[g].fly()
+    root.switchStarted = Date.now()
   }
 
   function checkLanded() {
     var elapsed = Date.now() - root.switchStarted
+    // Waiting for Hyprland to switch: the ghosts sit on their tiles, landed.
+    if (root.flightPending && elapsed < root.switchMaxMs) return
     if (elapsed < root.switchMinMs) return
     if (elapsed < root.switchMaxMs) {
       for (var a in root.ghosted)
@@ -679,7 +741,10 @@ Item {
     root.landedTicks = 0
     for (var a in root.ghosted) if (root.ghostItems[a]) root.ghostItems[a].land()
     root.ghosted = ({})
-    root.syncShadows()
+    root.flightPending = false
+    if (root.flight && root.opened) Quickshell.execDetached(["hyprctl", "eval", root.hyprModeLua])
+    if (root.flight) root.restoreShadows()
+    root.flight = false
   }
 
   ListModel { id: ghosts }
@@ -803,25 +868,36 @@ Item {
         id: card
         required property string address
         readonly property var entry: root.winData[address]
+        // The last placement, so a leaving card fades out where it was.
+        property var shown: entry
+        onEntryChanged: if (entry) shown = entry
+        // Its window left the bands (onto the focus area, or closed).
+        readonly property bool leaving: !entry
         // Placement animates only once the card has settled in, so a new
         // card appears in place and fades in rather than flying from 0,0.
         property bool settled: false
 
         host: root
-        win: entry || ({ address: address, title: "", appClass: "", toplevel: null })
+        win: shown || ({ address: address, title: "", appClass: "", toplevel: null })
+        enabled: !leaving
         // Hidden, not faded, while its ghost flies: the ghost lands on it.
-        visible: !!entry && !root.ghosted[address]
-        x: entry ? entry.x : 0
-        y: entry ? entry.y : 0
-        width: entry ? entry.w : 0
-        height: entry ? entry.h : 0
-        opacity: settled ? (dragging ? 0.35 : 1) : 0
+        visible: !!shown && !root.ghosted[address]
+        x: shown ? shown.x : 0
+        y: shown ? shown.y : 0
+        width: shown ? shown.w : 0
+        height: shown ? shown.h : 0
+        // Cards fade and scale in and out, around their centre.
+        opacity: settled && !leaving ? (dragging ? 0.35 : 1) : 0
+        scale: settled && !leaving ? 1 : 0.9
+        onOpacityChanged: if (leaving && opacity === 0) root.removeSlot(address)
+        onLeavingChanged: if (leaving && opacity === 0) root.removeSlot(address)
 
         Behavior on x { enabled: card.settled; SpringAnimation { spring: root.springStrength; damping: root.springDamping; epsilon: root.springEpsilon } }
         Behavior on y { enabled: card.settled; SpringAnimation { spring: root.springStrength; damping: root.springDamping; epsilon: root.springEpsilon } }
         Behavior on width { enabled: card.settled; SpringAnimation { spring: root.springStrength; damping: root.springDamping; epsilon: root.springEpsilon } }
         Behavior on height { enabled: card.settled; SpringAnimation { spring: root.springStrength; damping: root.springDamping; epsilon: root.springEpsilon } }
         Behavior on opacity { NumberAnimation { duration: root.slideDuration; easing.type: Easing.OutCubic } }
+        Behavior on scale { NumberAnimation { duration: root.slideDuration; easing.type: Easing.OutCubic } }
 
         Component.onCompleted: {
           root.cardItems[address] = card
@@ -947,6 +1023,9 @@ Item {
           flying = false
           fx = r.x; fy = r.y; fw = r.w; fh = r.h
           launched = true
+        }
+
+        function fly() {
           Qt.callLater(function() { flyer.armed = true; flyer.flying = true })
         }
 
