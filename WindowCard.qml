@@ -106,7 +106,7 @@ Item {
         var p = mapToItem(null, event.x, event.y)
         host.endDrag(p.x, p.y)
       } else {
-        host.activateWindow(card.win.address)
+        host.flyTo(card.win.address)
       }
       moved = false
     }

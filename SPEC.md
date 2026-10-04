@@ -71,7 +71,7 @@ The workspace label is above the top card of its group.
 
 ### Workspace switch animation
 
-When the workspace of the monitor changes (keyboard, bar, card click), each window flies from where it is drawn to where it goes:
+When the workspace of the monitor changes (workspace keys, card click, bar), each window flies from where it is drawn to where it goes:
 
 - Windows of the new workspace fly from their card to their tile in the focus area.
 - Windows of the old workspace fly from their tile to their new card in a band.
@@ -79,10 +79,19 @@ When the workspace of the monitor changes (keyboard, bar, card click), each wind
 
 The plugin cannot move real windows. It flies a ghost (a live `ScreencopyView`) per window on the Overlay layer. Each window on the monitor has a ghost for as long as the mode is on, hidden and capturing: a new `ScreencopyView` takes a few hundred ms to get its first frame, so a ghost made at switch time flew empty. Hyprland switches the workspace at once underneath. A wallpaper backdrop covers the tiling area (not the bar) until the ghosts land. Then ghosts and backdrop go in one frame and show the real windows and cards under them.
 
+Most switches are **planned**: the plugin starts them itself, so it gets ahead of Hyprland.
+
+- While the mode is on, Omarchy's workspace keys (`SUPER + 1…0`, `SUPER + TAB`, `SUPER + SHIFT + TAB`, `SUPER + CTRL + TAB`, `SUPER + scroll`) are rebound at runtime (`hyprctl eval`: `hl.unbind`, then `hl.bind`) to `omarchy-shell -q stef.periphery switchTo <target>`. A key bound twice would run both binds, hence the unbind. Turning the mode off (or unloading the plugin) runs `hyprctl reload config-only`, which puts Omarchy's binds back. `switchTo` falls back to a plain switch when the mode is off, so the keys keep working if the shell dies first.
+- A card click (or `flyTo` over IPC) is planned the same way.
+- A planned switch puts the backdrop up with ghosts of the current focus windows on their tiles (the screen looks the same), waits `plannedLeadMs` (24 ms) so that is on screen, then sends one `hyprctl --batch`: Hyprland's workspace animation off, the focus dispatch. No flash, no animation underneath. The landing turns the animation back on.
+
+Switches the plugin did not start (the bar's workspace buttons, other scripts) reach it ~8 ms after Hyprland has switched. For those, Hyprland's workspace animation is a slow-start fade (below), and the flight starts from the event.
+
 1. On `activeWorkspaceChanged` of the monitor, the plugin reads the current rects: tiles from the cache, cards and ghosts from their live items (a card that is still sliding starts from where it is).
 2. It relays out at once from the cached geometry. A hidden workspace can have old tiling, so the incoming targets can be wrong.
 3. The refresh 80 ms later gives the real tiles. The ghosts retarget in flight.
 4. When every ghost is on its target to within half a pixel, two checks in a row (at least 120 ms, at most 1.5 s), the ghosts hand off. Qt does not update `running` for an animation driven by a `Behavior`, so landing is measured, not read.
+5. Hand-off: the real shadows come back, and the backdrop and ghosts fade out together over `handoffMs` (90 ms), as one layer, over the real windows and the cards. The real border and blur fade in instead of popping. Faded one by one, the backdrop would show through the half-faded ghosts. The real shadow outside the backdrop (in the bands) still appears at once: Hyprland cannot fade it.
 
 The real windows' decorations reach past the backdrop: the shadow (60 px range) into the bands and under the translucent bar, and the 1 px border of a window tiled flush against the band (smart gaps: one window, gaps 0). So:
 
@@ -168,6 +177,10 @@ The plugin has an `IpcHandler` (needs `import Quickshell.Io`):
 ```bash
 # Drop a window at global pixel position (x, y). Ignored outside the bands or when the mode is off.
 omarchy-shell stef.periphery dropWindow 0x56c7bf955960 2300 300
+
+# Planned switches (the rebound workspace keys run switchTo).
+omarchy-shell stef.periphery switchTo 3          # also e+1, e-1, previous
+omarchy-shell stef.periphery flyTo 0x56c7bf955960
 ```
 
 The shell toggle passes an optional payload to `open()`:
@@ -235,6 +248,8 @@ Durations are given at `animSpeed: 1`.
 | `springStrength` | `11.2` | Qt `SpringAnimation.spring` for cards and ghosts. Matches the theme spring `spatial_default` (stiffness 700 × 16 ms step). |
 | `springDamping` | `0.65` | Qt `SpringAnimation.damping`. With `11.2`: ~340 ms, no overshoot. Lower is bouncier. Below `animSpeed` 1 it gets up to 22% extra: Qt steps springs in fixed 16 ms ticks that damp the overshoot at normal speed, and slow motion would otherwise overshoot ~2%. |
 | `ghostBlur` | `96` | Blur radius in px of the wallpaper behind ghosts. Matched by eye to `decoration:blur` size 6, 3 passes (dual-kawase has no exact radius); past 64 px it uses `blurMultiplier`. `ghostBlurContrast` (`-0.11`) and `ghostBlurSaturation` (`0.17`) match its contrast 0.89 and vibrancy 0.17. |
+| `handoffMs` | `90` | The hand-off crossfade from ghosts to real windows. |
+| `plannedLeadMs` | `24` | From putting the backdrop up to telling Hyprland to switch, in a planned switch. Not scaled by `animSpeed`. |
 | `coverBleed` | `2` | How far the switch backdrop reaches into the bands, to cover a flush window's border. At least `general:border_size`. |
 | `switchMinMs` / `switchMaxMs` | `120` / `1500` | Shortest and longest switch flight before the hand-off. |
 
@@ -251,7 +266,8 @@ Colours and fonts come from the theme `[menu]` tokens (`Color.menu.*`, `Style.*`
 - **Fullscreen** windows cover the full monitor, bands included.
 - **Narrow bands.** On a 16:9 monitor the bands are narrow (380 px at 5:4). The solver stacks cards vertically. A wider monitor or a smaller ratio gives larger cards.
 - **Hyprland fade while on.** `hyprctl reload` while the mode is on turns the slide back on under the ghosts. Toggle the mode off and on.
-- **Switch starts a frame late.** Hyprland shows the new workspace before the plugin gets the event (~8 ms) and draws its first frame. The slow-start fade hides that frame; see [Workspace switch animation](#workspace-switch-animation).
+- **Unplanned switches start a frame late.** A switch the plugin did not start reaches it after Hyprland has drawn the new workspace. The slow-start fade hides that frame. Planned switches (keys, card clicks) do not have this.
+- **Workspace keys while on.** The plugin rebinds Omarchy's workspace keys at runtime and turns the mode off with `hyprctl reload config-only`, which also resets any other runtime config change. Keys added to `bindings/tiling.lua` later are not rebound until `bindsLua` lists them.
 - **ScreencopyView does not blend.** A `ScreencopyView` overwrites what is under it with the window's own pixels and alpha. Over the backdrop, a translucent window (foot) made the Overlay surface translucent, and the real window behind showed through as a faint second copy; inside a ghost it wiped the blur patch. The `ScreencopyView` itself has `layer.enabled: true`: it renders alone into a texture that is drawn with normal blending. A layer on a parent item does not help, as the overwrite then happens inside that layer.
 - **Hand-off border and shadow.** Ghosts have no Hyprland border or shadow. Both show when the ghosts hand off.
 - **No drop outline for real-window drags.** See [Drag of a real window into a band](#drag-of-a-real-window-into-a-band).

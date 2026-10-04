@@ -64,6 +64,19 @@ Item {
   property bool transitioning: false
   property double switchStarted: 0
   property int landedTicks: 0
+  // A switch the plugin started itself (planned): set up and waiting for
+  // Hyprland to switch (flightPending).
+  property bool planned: false
+  property bool flightPending: false
+  // The hand-off crossfade: the backdrop and ghosts fade out together, as
+  // one layer, over the real windows and the cards.
+  property real fxOpacity: 1
+  property bool handingOff: false
+  // The workspace in the focus area and the one before it (for "previous").
+  property int shownWorkspace: -1
+  property int previousWorkspace: -1
+  // The workspace keys go through the plugin while the mode is on.
+  property bool bindsOverridden: false
   // Address -> true while a ghost flies for that window; its card waits.
   property var ghosted: ({})
   // Resolved wallpaper file for the backdrop.
@@ -73,6 +86,7 @@ Item {
   property bool hyprSlideOff: false
   // easeInOutCubic is one of Omarchy's default curves; speed 1.5 = 150 ms.
   readonly property string hyprSwitchFade: 'hl.animation({ leaf = "workspaces", enabled = true, speed = 1.5, bezier = "easeInOutCubic", style = "fade" })'
+  readonly property string hyprOffLua: 'hl.animation({ leaf = "workspaces", enabled = false })'
   property string hyprSlideRestore: ""
   // Address -> true for windows we turned the shadow off for. Band windows
   // are hidden, so they lose nothing; a window then arrives in the focus
@@ -116,6 +130,13 @@ Item {
   // that follows a switch can still retarget them; and at most this long.
   readonly property int switchMinMs: ms(120)
   readonly property int switchMaxMs: ms(1500)
+  // The hand-off crossfade. Long enough that the real window's border,
+  // shadow and blur fade in rather than pop, short enough not to read as a
+  // second animation.
+  readonly property int handoffMs: ms(90)
+  // From putting the backdrop up to telling Hyprland to switch: the backdrop
+  // must be on screen first (a couple of frames).
+  readonly property int plannedLeadMs: 24
   // How far the switch backdrop reaches into the bands, to cover the border
   // (general:border_size) of a window tiled flush against the band.
   readonly property int coverBleed: 2
@@ -162,7 +183,9 @@ Item {
         if (screens[i].name === mon.name) root.targetScreen = screens[i]
     }
     root.opened = true
+    root.shownWorkspace = root.currentWorkspaceId()
     root.layoutSignature = ""
+    root.overrideBinds()
     root.disableHyprSlide()
     if (!wallpaperProc.running) wallpaperProc.running = true
     Hyprland.refreshToplevels()
@@ -176,6 +199,7 @@ Item {
     root.finishSwitch()
     root.restoreHyprSlide()
     root.restoreShadows()
+    root.restoreBinds()
     root.targetMonitor = null
     root.layoutSignature = ""
     root.cancelDrag()
@@ -189,6 +213,41 @@ Item {
   Component.onDestruction: {
     root.restoreHyprSlide()
     root.restoreShadows()
+    root.restoreBinds()
+  }
+
+  // While the mode is on, Omarchy's workspace keys (bindings/tiling.lua) go
+  // through switchTo, so their switches are planned like a card click. A key
+  // bound twice runs both binds, so each is unbound first. switchTo falls
+  // back to a plain switch when the mode is off, so the keys keep working if
+  // the shell dies before the binds are put back.
+  readonly property string bindsLua: [
+    'local function sw(spec) return hl.dsp.exec_cmd("omarchy-shell -q stef.periphery switchTo " .. spec) end',
+    'for i = 1, 10 do',
+    '  local key = "SUPER + code:" .. (i + 9)',
+    '  hl.unbind(key)',
+    '  hl.bind(key, sw(i), { description = "Switch to workspace " .. i .. " (periphery)" })',
+    'end',
+    'for _, b in ipairs({ { "SUPER + TAB", "e+1", "Next workspace" }, { "SUPER + SHIFT + TAB", "e-1", "Previous workspace" },',
+    '    { "SUPER + CTRL + TAB", "previous", "Former workspace" }, { "SUPER + mouse_down", "e+1", "Scroll active workspace forward" },',
+    '    { "SUPER + mouse_up", "e-1", "Scroll active workspace backward" } }) do',
+    '  hl.unbind(b[1])',
+    '  hl.bind(b[1], sw(b[2]), { description = b[3] .. " (periphery)" })',
+    'end',
+  ].join("\n")
+
+  function overrideBinds() {
+    if (root.bindsOverridden) return
+    root.bindsOverridden = true
+    Quickshell.execDetached(["hyprctl", "eval", root.bindsLua])
+  }
+
+  // Reloading the config puts Omarchy's binds back (and the theme's
+  // workspace animation, which restoreHyprSlide also writes).
+  function restoreBinds() {
+    if (!root.bindsOverridden) return
+    root.bindsOverridden = false
+    Quickshell.execDetached(["hyprctl", "reload", "config-only"])
   }
 
   function setShadow(address, on) {
@@ -199,7 +258,7 @@ Item {
   // Band windows shadowless, focus windows back to their own setting
   // ("unset" keeps a window rule's no_shadow). Waits for a switch to land.
   function syncShadows() {
-    if (!root.opened || root.transitioning || root.holdShadows) return
+    if (!root.opened || (root.transitioning && !root.handingOff) || root.holdShadows) return
     var next = {}
     for (var a in root.winData) {
       next[a] = true
@@ -298,6 +357,69 @@ Item {
     Hyprland.dispatch('hl.dsp.focus({ window = "address:' + address + '" })')
   }
 
+  // A switch the plugin starts itself (workspace keys, card clicks) gets
+  // ahead of Hyprland: it puts the backdrop up with ghosts of the current
+  // focus windows on their tiles (the screen looks the same), waits until
+  // that is on screen, then turns Hyprland's workspace animation off for
+  // this switch and switches. beginSwitch flies the ghosts; finishSwitch
+  // turns the animation back on.
+  function plannedSwitch(dispatch) {
+    var ws = root.targetMonitor ? root.targetMonitor.activeWorkspace : null
+    if (!root.opened || root.dragAddress !== "" || root.transitioning || (ws && ws.hasFullscreen)) {
+      Hyprland.dispatch(dispatch)
+      return
+    }
+    wallBlurTex.scheduleUpdate()
+    var ghosted = {}
+    for (var a in root.focusRects) {
+      if (!root.ghostItems[a]) continue
+      root.ghostItems[a].launch(root.focusRects[a])
+      ghosted[a] = true
+    }
+    root.ghosted = ghosted
+    root.planned = true
+    root.flightPending = true
+    root.transitioning = true
+    root.switchStarted = Date.now()
+    plannedTimer.dispatch = dispatch
+    plannedTimer.restart()
+  }
+
+  Timer {
+    id: plannedTimer
+    property string dispatch: ""
+    interval: root.plannedLeadMs
+    onTriggered: Quickshell.execDetached(["hyprctl", "--batch",
+      "eval " + root.hyprOffLua + " ; dispatch " + dispatch])
+  }
+
+  function flyTo(address) {
+    root.plannedSwitch('hl.dsp.focus({ window = "address:' + address + '" })')
+  }
+
+  // A workspace key's target ("3", "e+1", "e-1", "previous") -> the id it
+  // goes to on this monitor, or -1. "e" counts existing workspaces, wrapping.
+  function resolveWorkspace(spec) {
+    if (/^\d+$/.test(spec)) return parseInt(spec)
+    if (spec === "previous") return root.previousWorkspace
+    var step = spec === "e+1" ? 1 : spec === "e-1" ? -1 : 0
+    if (!step) return -1
+    var ids = Hyprland.workspaces.values.filter(function(w) {
+      return w.id > 0 && w.monitor && w.monitor.id === root.monId
+    }).map(function(w) { return w.id }).sort(function(a, b) { return a - b })
+    var at = ids.indexOf(root.currentWorkspaceId())
+    if (at < 0 || ids.length < 2) return -1
+    return ids[(at + step + ids.length) % ids.length]
+  }
+
+  function switchTo(spec) {
+    var plain = 'hl.dsp.focus({ workspace = "' + spec + '" })'
+    if (!root.opened) { Hyprland.dispatch(plain); return }
+    var id = root.resolveWorkspace(spec)
+    if (id === root.currentWorkspaceId()) return
+    root.plannedSwitch(id > 0 ? 'hl.dsp.focus({ workspace = "' + id + '" })' : plain)
+  }
+
   // The workspace shown in the focus area: the target monitor's, not the
   // focused one, which is on another monitor when focus moves away.
   function currentWorkspaceId() {
@@ -353,6 +475,16 @@ Item {
   // (Hyprland focuses the window it drags) and the cursor position.
   IpcHandler {
     target: "stef.periphery"
+
+    // Goes to a window the way a card click does (a planned switch).
+    function flyTo(address: string): void {
+      root.flyTo(root.normalizeAddress(address))
+    }
+
+    // Workspace keys while the mode is on: "3", "e+1", "e-1", "previous".
+    function switchTo(spec: string): void {
+      root.switchTo(spec)
+    }
 
     function dropWindow(address: string, x: string, y: string): void {
       if (!root.opened) return
@@ -627,7 +759,19 @@ Item {
   // band. The refresh that follows the switch retargets ghosts whose real
   // tiles differ from the cache (hidden workspaces keep their old tiling).
   function beginSwitch() {
+    var current = root.currentWorkspaceId()
+    if (current !== root.shownWorkspace) {
+      root.previousWorkspace = root.shownWorkspace
+      root.shownWorkspace = current
+    }
     if (!root.opened || root.dragAddress !== "") return
+    root.flightPending = false
+    // A switch during the hand-off: the ghosts fly on.
+    if (root.handingOff) {
+      handoffAnim.stop()
+      root.fxOpacity = 1
+      root.handingOff = false
+    }
     wallBlurTex.scheduleUpdate()
     var oldFocus = root.focusRects
     var from = {}
@@ -648,20 +792,25 @@ Item {
       .concat(Object.keys(root.focusRects).filter(function(addr) { return !oldFocus[addr] }))
     for (var i = 0; i < crossing.length; i++) {
       var addr = crossing[i]
-      // A window already in flight keeps its ghost, which retargets.
+      // A window already in flight, or a planned switch's outgoing window,
+      // keeps its ghost, which retargets.
       if (ghosted[addr] || !from[addr] || !root.ghostItems[addr]) continue
       root.ghostItems[addr].launch(from[addr])
       ghosted[addr] = true
     }
     root.ghosted = ghosted
+    for (var g in ghosted) if (root.ghostItems[g]) root.ghostItems[g].fly()
     if (Object.keys(ghosted).length > 0) {
       root.transitioning = true
       root.switchStarted = Date.now()
-    } else root.syncShadows()
+    } else root.finishSwitch()
   }
 
   function checkLanded() {
+    if (root.handingOff) return
     var elapsed = Date.now() - root.switchStarted
+    // Waiting for Hyprland to switch: the ghosts sit on their tiles, landed.
+    if (root.flightPending && elapsed < root.switchMaxMs) return
     if (elapsed < root.switchMinMs) return
     if (elapsed < root.switchMaxMs) {
       for (var a in root.ghosted)
@@ -669,16 +818,41 @@ Item {
       // Twice in a row, so a spring passing through its target doesn't count.
       if (++root.landedTicks < 2) return
     }
-    root.finishSwitch()
+    root.startHandoff()
   }
 
   // Hand-off: ghosts and backdrop go in the same frame, revealing the real
   // windows they sit on and the cards they landed on.
+  // Hand-off: the real windows' shadows come back, and the backdrop and
+  // ghosts fade out together over the real windows and the cards.
+  function startHandoff() {
+    root.handingOff = true
+    root.syncShadows()
+    handoffAnim.restart()
+  }
+
+  NumberAnimation {
+    id: handoffAnim
+    target: root
+    property: "fxOpacity"
+    from: 1
+    to: 0
+    duration: root.handoffMs
+    easing.type: Easing.InOutQuad
+    onFinished: root.finishSwitch()
+  }
+
   function finishSwitch() {
+    handoffAnim.stop()
     root.transitioning = false
+    root.handingOff = false
+    root.fxOpacity = 1
     root.landedTicks = 0
     for (var a in root.ghosted) if (root.ghostItems[a]) root.ghostItems[a].land()
     root.ghosted = ({})
+    root.flightPending = false
+    if (root.planned && root.opened) Quickshell.execDetached(["hyprctl", "eval", root.hyprSwitchFade])
+    root.planned = false
     root.syncShadows()
   }
 
@@ -810,7 +984,7 @@ Item {
         host: root
         win: entry || ({ address: address, title: "", appClass: "", toplevel: null })
         // Hidden, not faded, while its ghost flies: the ghost lands on it.
-        visible: !!entry && !root.ghosted[address]
+        visible: !!entry && (!root.ghosted[address] || root.handingOff)
         x: entry ? entry.x : 0
         y: entry ? entry.y : 0
         width: entry ? entry.w : 0
@@ -846,172 +1020,184 @@ Item {
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
 
-    // Covers the tiling area (the bar stays visible) so the real windows of
-    // the new workspace, already in place, show only once the ghosts land.
+    // The switch: backdrop and ghosts. One group, so the hand-off fades them
+    // out as one image (a layer while it runs); faded one by one, the
+    // backdrop would show through the half-faded ghosts.
     Item {
-      x: root.sideW - root.coverBleed
-      y: root.reserved[1]
-      width: root.focusW + root.coverBleed * 2
-      height: root.monH - root.reserved[1] - root.reserved[3]
-      clip: true
-      visible: root.transitioning
+      anchors.fill: parent
+      opacity: root.fxOpacity
+      layer.enabled: root.handingOff
 
-      Rectangle {
-        anchors.fill: parent
-        color: root.background
+      // Covers the tiling area (the bar stays visible) so the real windows of
+      // the new workspace, already in place, show only once the ghosts land.
+      Item {
+        x: root.sideW - root.coverBleed
+        y: root.reserved[1]
+        width: root.focusW + root.coverBleed * 2
+        height: root.monH - root.reserved[1] - root.reserved[3]
+        clip: true
+        visible: root.transitioning
+
+        Rectangle {
+          anchors.fill: parent
+          color: root.background
+        }
+
+        // Lined up with the full-screen wallpaper underneath.
+        Image {
+          x: -parent.x
+          y: -parent.y
+          width: root.monW
+          height: root.monH
+          source: Util.fileUrl(root.wallpaper)
+          fillMode: Image.PreserveAspectCrop
+          cache: true
+        }
       }
 
-      // Lined up with the full-screen wallpaper underneath.
-      Image {
-        x: -parent.x
-        y: -parent.y
+      // The wallpaper, blurred once into a texture that each ghost samples.
+      Item {
+        id: wallSource
         width: root.monW
         height: root.monH
-        source: Util.fileUrl(root.wallpaper)
-        fillMode: Image.PreserveAspectCrop
-        cache: true
-      }
-    }
+        visible: false
 
-    // The wallpaper, blurred once into a texture that each ghost samples.
-    Item {
-      id: wallSource
-      width: root.monW
-      height: root.monH
-      visible: false
-
-      Image {
-        anchors.fill: parent
-        source: Util.fileUrl(root.wallpaper)
-        fillMode: Image.PreserveAspectCrop
-        cache: true
-      }
-    }
-
-    MultiEffect {
-      id: wallBlur
-      source: wallSource
-      width: root.monW
-      height: root.monH
-      visible: false
-      blurEnabled: true
-      // MultiEffect blurs up to blurMax; blurMultiplier stretches past it.
-      blurMax: 64
-      blur: Math.min(1, root.ghostBlur / 64)
-      blurMultiplier: Math.max(0, root.ghostBlur / 64 - 1)
-      contrast: root.ghostBlurContrast
-      saturation: root.ghostBlurSaturation
-    }
-
-    ShaderEffectSource {
-      id: wallBlurTex
-      sourceItem: wallBlur
-      width: root.monW
-      height: root.monH
-      visible: false
-      // Rendered once per switch (beginSwitch): rendering every frame cost
-      // frames, and a texture rendered only once came back blank later.
-      live: false
-    }
-
-    Repeater {
-      model: ghosts
-
-      // One per window on the monitor, for as long as the mode is on: a new
-      // ScreencopyView takes a few hundred ms to get its first frame, so a
-      // ghost made at switch time flew empty. Hidden until launched.
-      delegate: Item {
-        id: flyer
-        required property string address
-        // Where the window is going: its tile, or its card. Follows rebuilds.
-        readonly property var target: root.focusRects[address] || root.winData[address] || null
-        // Kept when the window closes mid-flight, so the ghost doesn't jump.
-        property var lastTarget: target
-        // The from rect of the current flight.
-        property real fx: 0
-        property real fy: 0
-        property real fw: 0
-        property real fh: 0
-        // launched puts the ghost at its from rect; armed enables the springs
-        // a step before flying moves it on to the target.
-        property bool launched: false
-        property bool armed: false
-        property bool flying: false
-        // Behavior-driven animations don't update `running`, so landing is
-        // measured: on the target, to within half a pixel.
-        readonly property bool landed: !target || (Math.abs(x - target.x) < 0.5 && Math.abs(y - target.y) < 0.5
-          && Math.abs(width - target.w) < 0.5 && Math.abs(height - target.h) < 0.5)
-
-        function launch(r) {
-          armed = false
-          flying = false
-          fx = r.x; fy = r.y; fw = r.w; fh = r.h
-          launched = true
-          Qt.callLater(function() { flyer.armed = true; flyer.flying = true })
-        }
-
-        function land() {
-          armed = false
-          flying = false
-          launched = false
-        }
-
-        onTargetChanged: if (target) lastTarget = target
-        // At rest it sits on its target, at full size, so it keeps capturing.
-        x: launched && !flying ? fx : (lastTarget ? lastTarget.x : 0)
-        y: launched && !flying ? fy : (lastTarget ? lastTarget.y : 0)
-        width: launched && !flying ? fw : (lastTarget ? lastTarget.w : 1)
-        height: launched && !flying ? fh : (lastTarget ? lastTarget.h : 1)
-        visible: !!root.ghosted[address]
-        opacity: target ? 1 : 0
-
-        Behavior on x { enabled: flyer.armed; SpringAnimation { spring: root.springStrength; damping: root.springDamping; epsilon: root.springEpsilon } }
-        Behavior on y { enabled: flyer.armed; SpringAnimation { spring: root.springStrength; damping: root.springDamping; epsilon: root.springEpsilon } }
-        Behavior on width { enabled: flyer.armed; SpringAnimation { spring: root.springStrength; damping: root.springDamping; epsilon: root.springEpsilon } }
-        Behavior on height { enabled: flyer.armed; SpringAnimation { spring: root.springStrength; damping: root.springDamping; epsilon: root.springEpsilon } }
-        Behavior on opacity { NumberAnimation { duration: root.fadeDuration } }
-        Component.onCompleted: root.ghostItems[address] = flyer
-        Component.onDestruction: if (root.ghostItems[address] === flyer) delete root.ghostItems[address]
-
-        // How far along its flight the ghost is, 0 at the start, 1 landed.
-        readonly property real travel: {
-          if (!lastTarget) return 1
-          var d = Math.hypot(lastTarget.x - fx, lastTarget.y - fy)
-          return d < 1 ? 1 : Math.min(1, Math.hypot(x - fx, y - fy) / d)
-        }
-
-        // The blurred wallpaper behind the window, as Hyprland draws it in
-        // the focus area. Cards sit on the sharp wallpaper, so the blur
-        // fades in over the first half of the way into the focus area (the
-        // spring's slow tail would leave it short at landing) and out over
-        // the first half of the way back.
-        Item {
+        Image {
           anchors.fill: parent
-          clip: true
-          opacity: {
-            var t = Math.min(1, flyer.travel * 2)
-            return root.focusRects[flyer.address] ? t : 1 - t
+          source: Util.fileUrl(root.wallpaper)
+          fillMode: Image.PreserveAspectCrop
+          cache: true
+        }
+      }
+
+      MultiEffect {
+        id: wallBlur
+        source: wallSource
+        width: root.monW
+        height: root.monH
+        visible: false
+        blurEnabled: true
+        // MultiEffect blurs up to blurMax; blurMultiplier stretches past it.
+        blurMax: 64
+        blur: Math.min(1, root.ghostBlur / 64)
+        blurMultiplier: Math.max(0, root.ghostBlur / 64 - 1)
+        contrast: root.ghostBlurContrast
+        saturation: root.ghostBlurSaturation
+      }
+
+      ShaderEffectSource {
+        id: wallBlurTex
+        sourceItem: wallBlur
+        width: root.monW
+        height: root.monH
+        visible: false
+        // Rendered once per switch (beginSwitch): rendering every frame cost
+        // frames, and a texture rendered only once came back blank later.
+        live: false
+      }
+
+      Repeater {
+        model: ghosts
+
+        // One per window on the monitor, for as long as the mode is on: a new
+        // ScreencopyView takes a few hundred ms to get its first frame, so a
+        // ghost made at switch time flew empty. Hidden until launched.
+        delegate: Item {
+          id: flyer
+          required property string address
+          // Where the window is going: its tile, or its card. Follows rebuilds.
+          readonly property var target: root.focusRects[address] || root.winData[address] || null
+          // Kept when the window closes mid-flight, so the ghost doesn't jump.
+          property var lastTarget: target
+          // The from rect of the current flight.
+          property real fx: 0
+          property real fy: 0
+          property real fw: 0
+          property real fh: 0
+          // launched puts the ghost at its from rect; armed enables the springs
+          // a step before flying moves it on to the target.
+          property bool launched: false
+          property bool armed: false
+          property bool flying: false
+          // Behavior-driven animations don't update `running`, so landing is
+          // measured: on the target, to within half a pixel.
+          readonly property bool landed: !target || (Math.abs(x - target.x) < 0.5 && Math.abs(y - target.y) < 0.5
+            && Math.abs(width - target.w) < 0.5 && Math.abs(height - target.h) < 0.5)
+
+          function launch(r) {
+            armed = false
+            flying = false
+            fx = r.x; fy = r.y; fw = r.w; fh = r.h
+            launched = true
           }
 
-          ShaderEffect {
-            x: -flyer.x
-            y: -flyer.y
-            width: root.monW
-            height: root.monH
-            property variant source: wallBlurTex
+          function fly() {
+            Qt.callLater(function() { flyer.armed = true; flyer.flying = true })
           }
-        }
 
-        // ScreencopyView doesn't blend: it overwrites what is under it with
-        // the window's own pixels and alpha. A translucent window (foot) then
-        // wiped the blur patch and left the surface translucent, so the real
-        // window behind showed through. Rendered alone into its own layer,
-        // it is drawn over the patch with normal blending.
-        ScreencopyView {
-          anchors.fill: parent
-          layer.enabled: flyer.visible
-          captureSource: flyer.lastTarget && flyer.lastTarget.toplevel ? flyer.lastTarget.toplevel.wayland : null
-          live: root.opened
+          function land() {
+            armed = false
+            flying = false
+            launched = false
+          }
+
+          onTargetChanged: if (target) lastTarget = target
+          // At rest it sits on its target, at full size, so it keeps capturing.
+          x: launched && !flying ? fx : (lastTarget ? lastTarget.x : 0)
+          y: launched && !flying ? fy : (lastTarget ? lastTarget.y : 0)
+          width: launched && !flying ? fw : (lastTarget ? lastTarget.w : 1)
+          height: launched && !flying ? fh : (lastTarget ? lastTarget.h : 1)
+          visible: !!root.ghosted[address]
+          opacity: target ? 1 : 0
+
+          Behavior on x { enabled: flyer.armed; SpringAnimation { spring: root.springStrength; damping: root.springDamping; epsilon: root.springEpsilon } }
+          Behavior on y { enabled: flyer.armed; SpringAnimation { spring: root.springStrength; damping: root.springDamping; epsilon: root.springEpsilon } }
+          Behavior on width { enabled: flyer.armed; SpringAnimation { spring: root.springStrength; damping: root.springDamping; epsilon: root.springEpsilon } }
+          Behavior on height { enabled: flyer.armed; SpringAnimation { spring: root.springStrength; damping: root.springDamping; epsilon: root.springEpsilon } }
+          Behavior on opacity { NumberAnimation { duration: root.fadeDuration } }
+          Component.onCompleted: root.ghostItems[address] = flyer
+          Component.onDestruction: if (root.ghostItems[address] === flyer) delete root.ghostItems[address]
+
+          // How far along its flight the ghost is, 0 at the start, 1 landed.
+          readonly property real travel: {
+            if (!lastTarget) return 1
+            var d = Math.hypot(lastTarget.x - fx, lastTarget.y - fy)
+            return d < 1 ? 1 : Math.min(1, Math.hypot(x - fx, y - fy) / d)
+          }
+
+          // The blurred wallpaper behind the window, as Hyprland draws it in
+          // the focus area. Cards sit on the sharp wallpaper, so the blur
+          // fades in over the first half of the way into the focus area (the
+          // spring's slow tail would leave it short at landing) and out over
+          // the first half of the way back.
+          Item {
+            anchors.fill: parent
+            clip: true
+            opacity: {
+              var t = Math.min(1, flyer.travel * 2)
+              return root.focusRects[flyer.address] ? t : 1 - t
+            }
+
+            ShaderEffect {
+              x: -flyer.x
+              y: -flyer.y
+              width: root.monW
+              height: root.monH
+              property variant source: wallBlurTex
+            }
+          }
+
+          // ScreencopyView doesn't blend: it overwrites what is under it with
+          // the window's own pixels and alpha. A translucent window (foot) then
+          // wiped the blur patch and left the surface translucent, so the real
+          // window behind showed through. Rendered alone into its own layer,
+          // it is drawn over the patch with normal blending.
+          ScreencopyView {
+            anchors.fill: parent
+            layer.enabled: flyer.visible
+            captureSource: flyer.lastTarget && flyer.lastTarget.toplevel ? flyer.lastTarget.toplevel.wayland : null
+            live: root.opened
+          }
         }
       }
     }
