@@ -80,6 +80,21 @@ Item {
   // inside the focus area (a full slide would cross the bands, as windows
   // are drawn above them).
   readonly property string workspaceStyle: "slidefade 10%"
+  // How far arriving and leaving cards travel, along with the focus area:
+  // the distance of workspaceStyle (a % of the monitor, or all of it), on
+  // the axis it slides; 0 for a style that doesn't slide.
+  readonly property bool cardSlideVertical: /vert/.test(workspaceStyle)
+  readonly property real cardSlide: {
+    if (!/slide/.test(workspaceStyle)) return 0
+    var m = /(\d+(?:\.\d+)?)%/.exec(workspaceStyle)
+    var extent = cardSlideVertical ? monH : monW
+    return m ? extent * parseFloat(m[1]) / 100 : extent
+  }
+  // The workspace in the focus area, and which way the last switch went:
+  // 1 to a higher workspace (Hyprland slides the content left or up), -1 to
+  // a lower one.
+  property int shownWorkspace: -1
+  property int switchDir: 0
   // The hl.animation call for that, built from the theme's animation.
   property string hyprModeLua: 'hl.animation({ leaf = "workspaces", enabled = true, speed = 3, bezier = "default", style = "' + workspaceStyle + '" })'
   readonly property string hyprOffLua: 'hl.animation({ leaf = "workspaces", enabled = false })'
@@ -171,6 +186,7 @@ Item {
         if (screens[i].name === mon.name) root.targetScreen = screens[i]
     }
     root.opened = true
+    root.shownWorkspace = root.currentWorkspaceId()
     root.layoutSignature = ""
     root.disableHyprSlide()
     if (!wallpaperProc.running) wallpaperProc.running = true
@@ -686,6 +702,9 @@ Item {
   // tiles differ from the cache (hidden workspaces keep their old tiling).
   function beginSwitch() {
     if (!root.opened) return
+    var current = root.currentWorkspaceId()
+    root.switchDir = current > root.shownWorkspace ? 1 : current < root.shownWorkspace ? -1 : 0
+    root.shownWorkspace = current
     // A switch the plugin didn't start (keyboard, bar): Hyprland animates the
     // focus area; the cards move to their new places right away.
     if (!root.flightPending) {
@@ -886,18 +905,33 @@ Item {
         y: shown ? shown.y : 0
         width: shown ? shown.w : 0
         height: shown ? shown.h : 0
-        // Cards fade and scale in and out, around their centre.
+        // Cards fade in and out while they travel with the focus area, the
+        // way Hyprland slides the workspace: an arriving card (its window
+        // just slid out of the focus area) comes from the switch side, a
+        // leaving card (its window slides in) goes towards it. Not during a
+        // flight: the ghost lands on the card, which must be in place.
+        readonly property real travel: root.flight ? 0 : -root.switchDir * root.cardSlide
+        readonly property real arriveFrom: -travel
+        property real leaveTo: 0
+        property real slide: leaving ? leaveTo : (settled ? 0 : arriveFrom)
+        transform: Translate {
+          x: root.cardSlideVertical ? 0 : card.slide
+          y: root.cardSlideVertical ? card.slide : 0
+        }
         opacity: settled && !leaving ? (dragging ? 0.35 : 1) : 0
-        scale: settled && !leaving ? 1 : 0.9
         onOpacityChanged: if (leaving && opacity === 0) root.removeSlot(address)
-        onLeavingChanged: if (leaving && opacity === 0) root.removeSlot(address)
+        onLeavingChanged: {
+          if (leaving) leaveTo = travel
+          if (leaving && opacity === 0) root.removeSlot(address)
+        }
 
         Behavior on x { enabled: card.settled; SpringAnimation { spring: root.springStrength; damping: root.springDamping; epsilon: root.springEpsilon } }
         Behavior on y { enabled: card.settled; SpringAnimation { spring: root.springStrength; damping: root.springDamping; epsilon: root.springEpsilon } }
         Behavior on width { enabled: card.settled; SpringAnimation { spring: root.springStrength; damping: root.springDamping; epsilon: root.springEpsilon } }
         Behavior on height { enabled: card.settled; SpringAnimation { spring: root.springStrength; damping: root.springDamping; epsilon: root.springEpsilon } }
         Behavior on opacity { NumberAnimation { duration: root.slideDuration; easing.type: Easing.OutCubic } }
-        Behavior on scale { NumberAnimation { duration: root.slideDuration; easing.type: Easing.OutCubic } }
+        // The theme's spring, like Hyprland's workspace slide it travels with.
+        Behavior on slide { SpringAnimation { spring: root.springStrength; damping: root.springDamping; epsilon: root.springEpsilon } }
 
         Component.onCompleted: {
           root.cardItems[address] = card

@@ -75,7 +75,7 @@ Two kinds of switch, with different owners of the animation:
 
 | Switch | Focus area | Bands |
 |--------|------------|-------|
-| Keyboard, bar, anything the plugin did not start | Hyprland animates the real windows: the theme's workspace curve and speed, style `workspaceStyle` (`slidefade 10%`). | Cards slide to their new places on the spring. Cards of the old workspace fade and scale in; cards of the new workspace fade and scale out. |
+| Keyboard, bar, anything the plugin did not start | Hyprland animates the real windows: the theme's workspace curve and speed, style `workspaceStyle` (`slidefade 10%`). | Cards slide to their new places on the spring. Cards travel with the focus area, the way Hyprland slides the workspace (`cardSlide`, on the spring): cards of the old workspace fade in coming from the focus-area side, cards of the new workspace fade out going towards it. No travel during a flight. |
 | Card click (or `flyTo` over IPC) | The Exposé flight: windows fly between their cards and their tiles. | Same as above. |
 
 Hyprland owns the real windows, so a keyboard switch has no copies and no hand-off: every frame of the focus area is real, with its border, shadow and blur. A full `slide` would move windows across the whole monitor, over the bands (windows are drawn above them); `slidefade 10%` stays mostly in the focus area.
@@ -238,7 +238,8 @@ Durations are given at `animSpeed: 1`.
 | `maxStretch` | `6` | Maximum vertical stretch of a group's position map. |
 | `animSpeed` | `1` | Global animation speed. `0.25` plays all animations 4× slower (to inspect them), `2` twice as fast. Scales every duration, the switch timeouts and the springs. |
 | `workspaceStyle` | `slidefade 10%` | Hyprland's workspace animation style while the mode is on (keyboard switches), with the theme's curve and speed. |
-| `slideDuration` | `320` | Card fade-in and fade-out time in ms (opacity and scale). |
+| `slideDuration` | `320` | Card fade-in and fade-out time in ms. |
+| `cardSlide` | 10% of the monitor width | How far arriving and leaving cards travel. Follows `workspaceStyle`: its percentage, on its axis (`vert` styles move vertically), 0 for a style that does not slide. |
 | `fadeDuration` | `150` | Ghost, drop outline and drag grow time in ms. |
 | `springStrength` | `11.2` | Qt `SpringAnimation.spring` for cards and ghosts. Matches the theme spring `spatial_default` (stiffness 700 × 16 ms step). |
 | `springDamping` | `0.65` | Qt `SpringAnimation.damping`. With `11.2`: ~340 ms, no overshoot. Lower is bouncier. Below `animSpeed` 1 it gets up to 22% extra: Qt steps springs in fixed 16 ms ticks that damp the overshoot at normal speed, and slow motion would otherwise overshoot ~2%. |
