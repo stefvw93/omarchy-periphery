@@ -5,24 +5,23 @@ import qs.Commons
 import qs.Ui
 
 // One window in the periphery: a live thumbnail at the window's aspect.
-// Click focuses it (switching workspace); dragging it into the focus area
-// moves it onto the current workspace, onto another workspace group moves
-// it there.
+// Hovering selects it (the close and fullscreen keys then act on it). Click
+// focuses it (switching workspace); dragging it into the focus area moves it
+// onto the current workspace, onto another workspace group moves it there.
 Item {
   id: card
 
   required property var win
   required property var host
 
-  readonly property bool hovered: mouse.containsMouse && !dragging
+  // The periphery selection: hovered, or reached with the focus keys.
+  readonly property bool selected: host.selected === win.address && !dragging
   readonly property bool dragging: host.dragAddress === win.address
 
   Rectangle {
     anchors.fill: parent
-    radius: host.cornerRadius
+    radius: host.windowRounding
     color: host.background
-    border.color: host.border
-    border.width: 1
     visible: !thumb.hasContent
 
     Text {
@@ -46,17 +45,14 @@ Item {
     live: host.opened
   }
 
-  Rectangle {
-    anchors.fill: parent
-    radius: host.cornerRadius
-    color: "transparent"
-    border.color: host.accent
-    border.width: Math.max(2, Style.space(2))
-    visible: card.hovered
+  // The window's border, as Hyprland would draw it: active when selected.
+  BorderOverlay {
+    borderSpec: card.selected ? host.activeBorder : host.inactiveBorder
+    radius: host.windowRounding
   }
 
   Rectangle {
-    visible: card.hovered
+    visible: card.selected
     anchors.horizontalCenter: parent.horizontalCenter
     anchors.bottom: parent.bottom
     anchors.bottomMargin: Style.spacing.sm
@@ -91,8 +87,14 @@ Item {
       pressAt = Qt.point(event.x, event.y)
       moved = false
     }
+    // Pointer input selects the card, also after the focus keys moved the
+    // selection away while the pointer stayed here (latest input wins).
+    onEntered: host.select(card.win.address)
     onPositionChanged: function(event) {
-      if (!pressed) return
+      if (!pressed) {
+        if (!card.selected) host.select(card.win.address)
+        return
+      }
       var p = mapToItem(null, event.x, event.y)
       if (!moved && Math.abs(event.x - pressAt.x) + Math.abs(event.y - pressAt.y) < 8) return
       if (!moved) {

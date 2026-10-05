@@ -27,6 +27,7 @@ Scott Jenson showed a prototype at a KDE event (["Are we really going to use the
 | Ratio | Focus area width divided by monitor height. The default is `1.25` (5:4). |
 | Side width (`sideW`) | The width of one band: `(monW - round(monH × ratio)) / 2`. |
 | Drop | The release of a drag. The drop position selects the target workspace. |
+| Selection | The one card that has the focus instead of a focus area window. Set by hovering a card or by the focus keys. |
 
 ## Behaviour
 
@@ -105,11 +106,68 @@ Each card is a `ScreencopyView` with `live: true`. Cards update at the screen fr
 
 A card without a frame yet shows the window class on the theme background.
 
+### Periphery selection
+
+One card at a time can have the focus instead of the windows in the focus area: the selection. The pointer and the focus keys both set it, and the latest input wins.
+
+While a card is selected:
+
+- the card draws the theme's active window border and shows its window title (see [Card borders](#card-borders));
+- the active window in the focus area draws its border in the inactive colour (`general:col.inactive_border`);
+- Return (and keypad Enter) goes to the card's window with the Exposé flight, and Escape lets go of the card. These two keys are bound only while a card is selected;
+- the keys bound to the actions below act on the card. Keys are found by action, not by key: any key bound to these actions works, also after a rebind.
+
+| Action (Omarchy's key) | No selection | Card selected |
+|------------------------|--------------|---------------|
+| `hl.dsp.window.close()` (`SUPER + W`) | Closes the active window. | Closes the card's window. |
+| `hl.dsp.window.fullscreen(…)` (`SUPER + F`, `SUPER + ALT + F`) | Fullscreens the active window. | Goes to the card's window (Hyprland switches to its workspace, no flight) and fullscreens it, in the same mode. |
+| `hl.dsp.focus({ direction = "l" / "r" })` (`SUPER + ←/→`) | Moves focus between windows. On the window at the left or right edge of the focus area (no tiled window beyond it), selects the card in that band nearest the window's height. Hyprland's own wrap-round to the other edge is skipped then. A band without cards: Hyprland's normal focus. | Moves to the nearest card that way in the same band. With no card that way, towards the focus area: focuses the focus area window on that edge nearest the card's height. |
+| `hl.dsp.focus({ direction = "u" / "d" })` (`SUPER + ↑/↓`) | Moves focus between windows. | Moves to the nearest card up or down in the same band, across groups. |
+
+The selection clears when:
+
+- the pointer moves over the focus area (a pointer that rests there during a keyboard selection doesn't count until it moves 4 px);
+- focus moves to a window (pointer, keys, a click, anything);
+- the workspace switches, a card drag starts, a card is clicked, or the selected window leaves the bands (closed, moved);
+- Escape or Return is pressed, or the mode turns off.
+
+Typed keys other than Return and Escape still reach the focus area window. The plugin doesn't take the keyboard: Hyprland then sends the pointer only to the surface that holds the keyboard, and hovering another card stopped working.
+
+#### Card borders
+
+Cards draw their border the way Hyprland draws a window's, in the current theme's style, through the shell's `Border` tokens (they follow theme changes):
+
+| Card | Border | Theme source |
+|------|--------|--------------|
+| At rest | Inactive | `[popups] border` (Omarchy themes give it Hyprland's inactive border colour) |
+| Selected, or being dragged | Active | `[hyprland] active-border`, Hyprland's active-border gradient |
+
+The width is Hyprland's `general:border_size` and the corner radius `decoration:rounding`, read from `hyprctl getoption` when the mode turns on and after every config reload (a theme switch reloads Hyprland).
+
+Moving the pointer onto empty band space keeps the selection, the way focus stays on a window when the pointer leaves it for the wallpaper.
+
+#### How the keys reach the plugin
+
+Hyprland binds are opaque Lua refs (`hyprctl binds` shows `dispatcher: "__lua"`), so the plugin can't find out which key does what. [`hypr.lua`](hypr.lua), loaded from `~/.config/hypr/hyprland.lua` before Omarchy's bindings (see [README.md](README.md)), wraps the three action constructors instead. A bind made with them gets a Lua function that checks the global `periphery`:
+
+- `nil` while the mode is off: the native action, unchanged.
+- `{ bands, focus, selected, cursor }` while the mode is on. The plugin writes it with `hyprctl eval` (`periphery_open(…)`, `periphery_select(address)`, `periphery_close()`), one call at a time so states arrive in order.
+
+Close and fullscreen run in the hook directly, against `address:<selected>`. The focus keys call the plugin over IPC (`enter`, `step`), because the plugin knows the card layout. A call that names its own window (`{ window = … }`) keeps the native action, so the plugin's own dispatches are not affected.
+
+While a card is selected, the hook binds Return, KP_Enter and Escape (`hl.bind`, removed with `:remove()` when the selection clears). Return calls `activate`, Escape calls `clear`.
+
+The hook also greys the border: it sets the active window's `active_border_color` to the inactive colour, and back to `general:col.active_border` when the selection clears. `set_prop` drops the first colour of a gradient, so the value gets a dummy first colour. (`value = "unset"` leaves the window with an empty gradient, so the theme value is written back instead.)
+
+Pointer motion over the focus area reaches neither the plugin (its surface takes input in the bands only) nor a Hyprland event. While a card is selected, a 50 ms `hl.timer` in the hook watches the cursor and calls `clear` once it moves over the focus area.
+
+A `hyprctl reload` starts a fresh Lua state. The plugin sends its state again on `configreloaded`.
+
 ### Pointer actions on cards
 
 | Action | Result |
 |--------|--------|
-| Hover | Accent border and window title. |
+| Hover | Selects the card (see [Periphery selection](#periphery-selection)). |
 | Click | Focus the window with the Exposé flight (see [The Exposé flight](#the-exposé-flight)). Hyprland goes to its workspace. That workspace leaves the periphery and the previous workspace enters it. |
 | Drag, drop in the focus area | Move the window to the current workspace and focus it. Dwindle tiles it next to the window under the pointer. |
 | Drag, drop on another group | Move the window to the workspace of that group. |
@@ -134,8 +192,10 @@ Hyprland does not report pointer motion during its own window drag. The plugin s
 ```
 ~/.config/omarchy/plugins/stef.periphery/
   manifest.json    plugin kind "panel", entry Periphery.qml
-  Periphery.qml    state, layout solver, surfaces, drag and drop, IPC
+  Periphery.qml    state, layout solver, surfaces, drag and drop, selection, IPC
   WindowCard.qml   one card: thumbnail, hover, click and drag input
+  hypr.lua         Hyprland side: wraps close, fullscreen and focus-direction for the selection
+  README.md        install: the mandatory Hyprland and shell config
   SPEC.md          this file
 ```
 
@@ -175,6 +235,15 @@ omarchy-shell stef.periphery dropWindow 0x56c7bf955960 2300 300
 
 # Go to a window the way a card click does: the Exposé flight.
 omarchy-shell stef.periphery flyTo 0x56c7bf955960
+
+# From hypr.lua (focus keys): select a card in the left/right band, coming from the active window.
+omarchy-shell stef.periphery enter l 0x56c7bf955960
+# From hypr.lua: move the selection (l, r, u, d).
+omarchy-shell stef.periphery step d
+# From hypr.lua: Return on a selected card; the Exposé flight to its window.
+omarchy-shell stef.periphery activate
+# From hypr.lua: Escape, or the pointer moved over the focus area; the selection clears.
+omarchy-shell stef.periphery clear
 ```
 
 The shell toggle passes an optional payload to `open()`:
@@ -197,33 +266,7 @@ hl.dsp.window.move({ workspace = "2", follow = false, window = "address:0x56c7bf
 
 ## Configuration
 
-### `~/.config/hypr/bindings.lua`
-
-```lua
--- Periphery exposé: tiling + bar in a centred 5:4 focus area, other workspaces in the side bands
-o.bind("SUPER + E", "Periphery exposé", "omarchy-shell shell toggle stef.periphery '{}'")
-
--- Periphery: when a SUPER-drag ends over a side band, send the dragged window
--- (Hyprland focuses the window it drags) to the workspace group under the cursor.
--- The plugin ignores drops outside the bands, or when the mode is off.
-hl.bind("SUPER + mouse:272", function()
-  local win = hl.get_active_window()
-  local pos = hl.get_cursor_pos()
-  if not win or not pos then return end
-  hl.exec_cmd(string.format("omarchy-shell -q stef.periphery dropWindow %s %d %d", win.address, math.floor(pos.x), math.floor(pos.y)))
-end, { release = true, non_consuming = true })
-```
-
-The release bind is `non_consuming`. The Omarchy drag bind on the same keys still works.
-
-### `~/.config/omarchy/shell.json`
-
-```json
-"plugins": [
-  { "id": "stef.overview" },
-  { "id": "stef.periphery" }
-]
-```
+[README.md](README.md) has the mandatory configuration: the hook line in `~/.config/hypr/hyprland.lua`, the toggle and drop binds in `~/.config/hypr/bindings.lua`, and the `plugins` entry in `~/.config/omarchy/shell.json`.
 
 ### Tunables (top of `Periphery.qml`)
 
@@ -259,6 +302,9 @@ Colours and fonts come from the theme `[menu]` tokens (`Color.menu.*`, `Style.*`
 - **One monitor.** The mode uses the monitor that has focus when it turns on. It does not follow a monitor focus change: the bands keep showing the workspaces around that monitor's active workspace. Multi-monitor is not tested.
 - **Fullscreen** windows cover the full monitor, bands included.
 - **Narrow bands.** On a 16:9 monitor the bands are narrow (380 px at 5:4). The solver stacks cards vertically. A wider monitor or a smaller ratio gives larger cards.
+- **The hook loads before Omarchy's bindings.** Wrapping in `bindings.lua` or the theme is too late: Omarchy's keys are bound by then. After adding the hook, run `hyprctl reload` once. Without the hook the plugin works, but hovering and the focus keys don't reach the cards.
+- **Focus keys go through `omarchy-shell`.** `enter` and `step` start a process per key press (a few tens of ms). Close and fullscreen run in the hook and have no delay.
+- **The greyed border is written back from the config.** A window rule that gives a window its own active border colour loses it after that window was greyed once.
 - **Hyprland reload while on.** `hyprctl reload` while the mode is on puts the theme's workspace slide back (a full slide crosses the bands). Toggle the mode off and on.
 - **Only clicks fly.** A switch the plugin did not start reaches it ~8 ms after Hyprland has switched, too late to put a backdrop up, so keyboard switches are Hyprland's animation. `flyTo` over IPC can bind the flight to keys.
 - **ScreencopyView does not blend.** A `ScreencopyView` overwrites what is under it with the window's own pixels and alpha. Over the backdrop, a translucent window (foot) made the Overlay surface translucent, and the real window behind showed through as a faint second copy; inside a ghost it wiped the blur patch. The `ScreencopyView` itself has `layer.enabled: true`: it renders alone into a texture that is drawn with normal blending. A layer on a parent item does not help, as the overwrite then happens inside that layer.
@@ -289,6 +335,10 @@ Manual checks:
 7. Switch fast between two workspaces. Ghosts retarget, nothing stays on screen.
 8. `hyprctl getprop address:<band window> no_shadow` is `true`, and `false` for focus windows. After the mode turns off, `false` for all (or the window rule's value).
 9. `hyprctl animations -j | jq '.[0][] | select(.name=="workspaces")'`: `style: slidefade 10%` with the theme's curve while on, the theme's slide after the mode turns off.
+10. Hover a card: the theme's active border, the active window's border turns inactive. Hover another card in the same band: the selection follows. `SUPER + W` closes the card's window, Return flies to it, Escape lets go. Move the pointer over the focus area: the selection clears and the border comes back.
+11. On the leftmost window, `SUPER + ←` selects a card in the left band. `SUPER + ↑/↓` move through the cards and groups, `SUPER + →` goes back to the focus area window on that edge. The same on the right.
+12. `SUPER + F` on a selected card: Hyprland goes to its workspace and the window is fullscreen.
+13. `hyprctl eval 'error(tostring(periphery))'`: a table while on, `nil` after the mode turns off.
 
 ## Out of scope
 

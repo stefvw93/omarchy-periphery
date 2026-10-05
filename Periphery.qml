@@ -104,6 +104,24 @@ Item {
   // would show past the backdrop ahead of their ghosts (they are hidden
   // until the switch, so they lose nothing).
   property var shadowless: ({})
+  // The periphery selection: the card that has the focus instead of a focus
+  // area window, set by hovering a card or by the focus keys moving past the
+  // focus area's edge (latest input wins). hypr.lua points the close and
+  // fullscreen keys at it and greys the active window's border.
+  property string selected: ""
+  // The window that was active when the card got selected.
+  property string selectedOver: ""
+  // Which bands have cards, for the focus keys to move into.
+  property bool cardsLeft: false
+  property bool cardsRight: false
+  // The state last sent to hypr.lua, and the one to send.
+  property string luaSent: ""
+  readonly property string luaState: !root.opened ? "if periphery_close then periphery_close() end"
+    : "if periphery_open then periphery_open(" + [root.cardsLeft, root.cardsRight,
+        Math.round(root.monX + root.sideW), Math.round(root.monX + root.monW - root.sideW),
+        Math.round(root.monY), Math.round(root.monY + root.monH)].join(", ")
+      + "); periphery_select(" + (root.selected ? '"' + root.selected + '"' : "nil") + ") end"
+  onLuaStateChanged: root.sendLuaState()
 
   property color background: Color.menu.background
   property color foreground: Color.menu.text
@@ -111,6 +129,14 @@ Item {
   property color selectedText: Color.menu.selectedText
   property color accent: Color.accent
   readonly property int cornerRadius: Style.cornerRadius
+  // Cards are drawn like windows, in the theme's border: the inactive border
+  // at rest, the active one (Hyprland's active-border gradient, from the
+  // theme's [hyprland] shell tokens) when selected. The theme's popups border
+  // is its Hyprland inactive border. Width and rounding are Hyprland's.
+  property int windowBorder: 1
+  property int windowRounding: 0
+  readonly property var activeBorder: Border.hyprlandActiveSpec(root.accent, root.windowBorder)
+  readonly property var inactiveBorder: Border.surfaceSpec("popups", "border", root.border, root.windowBorder)
   property string fontFamily: Style.font.menuFamily
 
   readonly property int bandMargin: Style.space(16)
@@ -190,6 +216,7 @@ Item {
     root.layoutSignature = ""
     root.disableHyprSlide()
     if (!wallpaperProc.running) wallpaperProc.running = true
+    if (!decorProc.running) decorProc.running = true
     Hyprland.refreshToplevels()
     Hyprland.refreshWorkspaces()
     Hyprland.refreshMonitors()
@@ -197,6 +224,7 @@ Item {
   }
 
   function close() {
+    root.clearSelection()
     root.opened = false
     root.finishSwitch()
     root.restoreHyprSlide()
@@ -214,6 +242,89 @@ Item {
   Component.onDestruction: {
     root.restoreHyprSlide()
     root.restoreShadows()
+    Quickshell.execDetached(["hyprctl", "eval", "if periphery_close then periphery_close() end"])
+  }
+
+  // One hyprctl at a time, so the states reach hypr.lua in order; a state
+  // that changed meanwhile goes after.
+  function sendLuaState() {
+    if (luaProc.running || root.luaState === root.luaSent) return
+    root.luaSent = root.luaState
+    luaProc.command = ["hyprctl", "eval", root.luaState]
+    luaProc.running = true
+  }
+
+  Process {
+    id: luaProc
+    // Not onExited: `running` is still true there, so the next state waited
+    // for good.
+    onRunningChanged: if (!running) root.sendLuaState()
+  }
+
+  // over: the active window, when known better than activeToplevel (which
+  // can lag behind a focus change).
+  function select(address, over) {
+    if (!root.opened || root.dragAddress !== "" || !root.winData[address]) return
+    var t = Hyprland.activeToplevel
+    if (over !== undefined) root.selectedOver = over
+    else if (!root.selected) root.selectedOver = t ? root.normalizeAddress(t.address) : ""
+    root.selected = address
+  }
+
+  function clearSelection() {
+    root.selected = ""
+  }
+
+  // A focus key moved past the focus area's edge towards a band ("l" or
+  // "r"): select the card there nearest the active window's height.
+  function enterBand(dir, active) {
+    if (!root.opened) return
+    var tile = root.focusRects[active] || null
+    var refY = tile ? tile.y + tile.h / 2 : root.monH / 2
+    var best = null
+    var bestD = Infinity
+    for (var a in root.winData) {
+      var c = root.winData[a]
+      if ((dir === "l") !== (c.x < root.monW / 2)) continue
+      var d = Math.abs(c.y + c.h / 2 - refY)
+      if (d < bestD) { bestD = d; best = a }
+    }
+    if (best) root.select(best, active)
+  }
+
+  // A focus key on a selected card: the nearest card that way in the same
+  // band; towards the focus area with no card left, the focus area window
+  // on that edge nearest the card's height.
+  function stepSelection(dir) {
+    var cur = root.winData[root.selected]
+    if (!cur) { root.clearSelection(); return }
+    var left = cur.x < root.monW / 2
+    var cx = cur.x + cur.w / 2
+    var cy = cur.y + cur.h / 2
+    var horizontal = dir === "l" || dir === "r"
+    var sign = dir === "l" || dir === "u" ? -1 : 1
+    var best = null
+    var bestScore = Infinity
+    for (var a in root.winData) {
+      var c = root.winData[a]
+      if (a === root.selected || (c.x < root.monW / 2) !== left) continue
+      var along = sign * (horizontal ? c.x + c.w / 2 - cx : c.y + c.h / 2 - cy)
+      var across = Math.abs(horizontal ? c.y + c.h / 2 - cy : c.x + c.w / 2 - cx)
+      if (along <= 1) continue
+      if (along + across * 2 < bestScore) { bestScore = along + across * 2; best = a }
+    }
+    if (best) { root.select(best); return }
+    if (dir !== (left ? "r" : "l")) return
+    var target = null
+    var targetScore = Infinity
+    for (var f in root.focusRects) {
+      var r = root.focusRects[f]
+      var edge = left ? r.x - root.sideW : root.monW - root.sideW - (r.x + r.w)
+      var off = cy < r.y ? r.y - cy : cy > r.y + r.h ? cy - r.y - r.h : 0
+      if (Math.abs(edge) + off < targetScore) { targetScore = Math.abs(edge) + off; target = f }
+    }
+    root.clearSelection()
+    if (target) root.activateWindow(target)
   }
 
   // Also runs on plugin unload, when the dispatch socket may already be
@@ -278,6 +389,20 @@ Item {
     onExited: if (!root.hyprSlideOff) { root.hyprSlideOff = true; root.restoreHyprSlide() }
   }
 
+  // Hyprland's border width and rounding, for the cards.
+  Process {
+    id: decorProc
+    command: ["sh", "-c", "hyprctl -j getoption general:border_size; hyprctl -j getoption decoration:rounding"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var size = /"general:border_size",\s*"int":\s*(\d+)/.exec(text)
+        var rounding = /"decoration:rounding",\s*"int":\s*(\d+)/.exec(text)
+        if (size) root.windowBorder = parseInt(size[1])
+        if (rounding) root.windowRounding = parseInt(rounding[1])
+      }
+    }
+  }
+
   Process {
     id: wallpaperProc
     command: ["readlink", "-f", Quickshell.env("HOME") + "/.local/state/omarchy/current/background"]
@@ -323,6 +448,7 @@ Item {
       root.activateWindow(address)
       return
     }
+    root.clearSelection()
     wallBlurTex.scheduleUpdate()
     var ghosted = {}
     for (var a in root.focusRects) {
@@ -415,6 +541,28 @@ Item {
       root.flyTo(root.normalizeAddress(address))
     }
 
+    // From hypr.lua: a focus key ("l", "r", "u", "d") past the focus area's
+    // edge (enter), or on a selected card (step).
+    function enter(dir: string, active: string): void {
+      root.enterBand(dir, active === "none" ? "" : root.normalizeAddress(active))
+    }
+
+    function step(dir: string): void {
+      root.stepSelection(dir)
+    }
+
+    // From hypr.lua: Return on a selected card goes to its window (the
+    // Exposé flight).
+    function activate(): void {
+      if (root.selected) root.flyTo(root.selected)
+    }
+
+    // From hypr.lua: Escape, or the pointer moved over the focus area, whose
+    // windows get the focus back.
+    function clear(): void {
+      root.clearSelection()
+    }
+
     function dropWindow(address: string, x: string, y: string): void {
       if (!root.opened) return
       var px = parseFloat(x) - root.monX
@@ -427,6 +575,7 @@ Item {
   }
 
   function beginDrag(win, w, h, gx, gy) {
+    root.clearSelection()
     root.dragWin = win
     root.dragW = w
     root.dragH = h
@@ -523,6 +672,9 @@ Item {
     placeSide(right.map(function(id) { return byWs[id] }), root.monW - root.sideW + root.bandMargin, wins, headers)
     root.winData = wins
     root.headers = headers
+    if (root.selected && !wins[root.selected]) root.clearSelection()
+    root.cardsLeft = left.length > 0
+    root.cardsRight = right.length > 0
     syncSlots(Object.keys(wins))
     // Ghosts for every window on the monitor, band or focus area.
     syncModel(ghosts, Object.keys(wins).concat(Object.keys(focus)))
@@ -707,6 +859,7 @@ Item {
   function beginSwitch() {
     if (!root.opened) return
     var current = root.currentWorkspaceId()
+    root.clearSelection()
     root.switchDir = current > root.shownWorkspace ? 1 : current < root.shownWorkspace ? -1 : 0
     root.shownWorkspace = current
     // A switch the plugin didn't start (keyboard, bar): Hyprland animates the
@@ -778,6 +931,17 @@ Item {
     function onActiveWorkspaceChanged() { root.beginSwitch() }
   }
 
+  // Focus moved to a window (pointer, keys, anything): it has the focus now,
+  // not the card.
+  Connections {
+    target: Hyprland
+    enabled: root.opened
+    function onActiveToplevelChanged() {
+      var t = Hyprland.activeToplevel
+      if (t && root.normalizeAddress(t.address) !== root.selectedOver) root.clearSelection()
+    }
+  }
+
   Timer {
     interval: 16
     repeat: true
@@ -798,6 +962,13 @@ Item {
     target: Hyprland
     enabled: root.opened
     function onRawEvent(event) {
+      // A reload starts hypr.lua afresh: it gets the state again.
+      // A theme switch reloads too: the border width and rounding may change.
+      if (event.name === "configreloaded") {
+        root.luaSent = ""
+        root.sendLuaState()
+        if (!decorProc.running) decorProc.running = true
+      }
       if (root.refreshEvents.indexOf(event.name) < 0) return
       if (!refreshTimer.running) {
         Hyprland.refreshToplevels()
@@ -1192,12 +1363,9 @@ Item {
         live: root.dragAddress !== ""
       }
 
-      Rectangle {
-        anchors.fill: parent
-        radius: root.cornerRadius
-        color: "transparent"
-        border.color: root.accent
-        border.width: Math.max(2, Style.space(2))
+      BorderOverlay {
+        borderSpec: root.activeBorder
+        radius: root.windowRounding
       }
     }
   }
