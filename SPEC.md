@@ -93,7 +93,7 @@ The plugin starts this switch, so it gets ahead of Hyprland:
 
 The real windows' decorations reach past the backdrop: the shadow (60 px range) into the bands and under the translucent bar, and the 1 px border of a window tiled flush against the band (smart gaps: one window, gaps 0). Hence the `no_shadow` during the flight (`value = "unset"` afterwards, so a window rule's `no_shadow` stays), and the backdrop reaching `coverBleed` (2 px) into each band.
 
-No flight when the current workspace has a fullscreen window, during a card drag, or during another flight: the click then just focuses the window.
+No flight when the current workspace has a fullscreen window, during a card drag, during another flight, or for a window without a card (in the focus area, on another monitor, on a special workspace; possible over IPC): the click then just focuses the window.
 
 #### Hyprland's workspace animation
 

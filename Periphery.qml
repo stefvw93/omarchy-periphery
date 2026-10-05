@@ -315,7 +315,11 @@ Item {
   // the ghosts; finishSwitch turns the animation back on.
   function flyTo(address) {
     var ws = root.targetMonitor ? root.targetMonitor.activeWorkspace : null
-    if (!root.opened || root.dragAddress !== "" || root.transitioning || (ws && ws.hasFullscreen)) {
+    // Only a window with a card switches workspace: one in the focus area,
+    // on another monitor or on a special workspace would leave the flight
+    // waiting for a switch that never comes.
+    if (!root.opened || root.dragAddress !== "" || root.transitioning || (ws && ws.hasFullscreen)
+        || !root.winData[address]) {
       root.activateWindow(address)
       return
     }
@@ -332,7 +336,7 @@ Item {
     root.transitioning = true
     root.switchStarted = Date.now()
     // The target workspace's windows lose their shadow until the landing.
-    var target = root.winData[address] ? root.winData[address].wsId : -1
+    var target = root.winData[address].wsId
     var shadowless = {}
     for (var w in root.winData) if (root.winData[w].wsId === target) shadowless[w] = true
     root.shadowless = shadowless
