@@ -82,7 +82,7 @@ The plugin cannot move real windows. It flies a ghost (a live `ScreencopyView`) 
 Most switches are **planned**: the plugin starts them itself, so it gets ahead of Hyprland.
 
 - While the mode is on, Omarchy's workspace keys (`SUPER + 1…0`, `SUPER + TAB`, `SUPER + SHIFT + TAB`, `SUPER + CTRL + TAB`, `SUPER + scroll`) are rebound at runtime (`hyprctl eval`: `hl.unbind`, then `hl.bind`) to `omarchy-shell -q stef.periphery switchTo <target>`. A key bound twice would run both binds, hence the unbind. Turning the mode off (or unloading the plugin) runs `hyprctl reload config-only`, which puts Omarchy's binds back. `switchTo` falls back to a plain switch when the mode is off, so the keys keep working if the shell dies first.
-- A card click (or `flyTo` over IPC) is planned the same way.
+- A card click (or `flyTo` over IPC) is planned the same way. A window without a card (in the focus area, on another monitor, on a special workspace; possible over IPC) just gets focus.
 - A planned switch puts the backdrop up with ghosts of the current focus windows on their tiles (the screen looks the same), waits `plannedLeadMs` (24 ms) so that is on screen, then sends one `hyprctl --batch`: Hyprland's workspace animation off, the focus dispatch. No flash, no animation underneath. The landing turns the animation back on.
 
 Switches the plugin did not start (the bar's workspace buttons, other scripts) reach it ~8 ms after Hyprland has switched. For those, Hyprland's workspace animation is a slow-start fade (below), and the flight starts from the event.

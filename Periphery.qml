@@ -394,6 +394,13 @@ Item {
   }
 
   function flyTo(address) {
+    // Only a window with a card switches workspace: one in the focus area,
+    // on another monitor or on a special workspace would leave the flight
+    // waiting for a switch that never comes.
+    if (!root.opened || !root.winData[address]) {
+      root.activateWindow(address)
+      return
+    }
     root.plannedSwitch('hl.dsp.focus({ window = "address:' + address + '" })')
   }
 
