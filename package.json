@@ -1,0 +1,16 @@
+{
+  "name": "omarchy-periphery",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "verify": "vp fmt --check && vp lint --deny-warnings && vp test run && vp run pack:fresh && scripts/bundle-check.sh && vp run qml && vp run lua",
+    "pack:fresh": "scripts/pack-fresh.sh",
+    "qml": "scripts/qml.sh",
+    "lua": "scripts/lua.sh",
+    "deploy": "vp pack && scripts/deploy.sh",
+    "smoke": "scripts/smoke.sh"
+  },
+  "devDependencies": {
+    "vite-plus": "^1.0.0"
+  }
+}

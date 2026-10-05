@@ -1,0 +1,5 @@
+# Formats and lints the staged files, then runs the whole check. A commit
+# never lands with `vp run verify` failing.
+export PATH="$HOME/.vite-plus/bin:$PATH"
+vp staged
+vp run verify

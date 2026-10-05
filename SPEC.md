@@ -17,17 +17,17 @@ Scott Jenson showed a prototype at a KDE event (["Are we really going to use the
 
 ## Ubiquitous language
 
-| Term | Definition |
-|------|------------|
-| Focus area | The centred part of the monitor. Tiling and the bar use only this area. |
-| Band | The part of the monitor at the left or right of the focus area. |
-| Periphery | The two bands together. |
-| Card | The live thumbnail of one window in a band. |
-| Group | The cards of one workspace, with the workspace label above them. |
-| Ratio | Focus area width divided by monitor height. The default is `1.25` (5:4). |
-| Side width (`sideW`) | The width of one band: `(monW - round(monH × ratio)) / 2`. |
-| Drop | The release of a drag. The drop position selects the target workspace. |
-| Selection | The one card that has the focus instead of a focus area window. Set by hovering a card or by the focus keys. |
+| Term                 | Definition                                                                                                   |
+| -------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Focus area           | The centred part of the monitor. Tiling and the bar use only this area.                                      |
+| Band                 | The part of the monitor at the left or right of the focus area.                                              |
+| Periphery            | The two bands together.                                                                                      |
+| Card                 | The live thumbnail of one window in a band.                                                                  |
+| Group                | The cards of one workspace, with the workspace label above them.                                             |
+| Ratio                | Focus area width divided by monitor height. The default is `1.25` (5:4).                                     |
+| Side width (`sideW`) | The width of one band: `(monW - round(monH × ratio)) / 2`.                                                   |
+| Drop                 | The release of a drag. The drop position selects the target workspace.                                       |
+| Selection            | The one card that has the focus instead of a focus area window. Set by hovering a card or by the focus keys. |
 
 ## Behaviour
 
@@ -51,10 +51,10 @@ The plugin shows the occupied regular workspaces (id > 0) of the focused monitor
 Example, with workspaces 1, 2, 3 and 4 occupied:
 
 | Current | Left band | Right band |
-|---------|-----------|------------|
-| 1 | 4 | 2, 3 |
-| 2 | 1 | 3, 4 |
-| 4 | 2, 3 | 1 |
+| ------- | --------- | ---------- |
+| 1       | 4         | 2, 3       |
+| 2       | 1         | 3, 4       |
+| 4       | 2, 3      | 1          |
 
 ### Placement of cards
 
@@ -74,10 +74,10 @@ The workspace label is above the top card of its group.
 
 Two kinds of switch, with different owners of the animation:
 
-| Switch | Focus area | Bands |
-|--------|------------|-------|
+| Switch                                           | Focus area                                                                                                           | Bands                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Keyboard, bar, anything the plugin did not start | Hyprland animates the real windows: the theme's workspace curve and speed, style `workspaceStyle` (`slidefade 10%`). | Cards slide to their new places on the spring. Cards travel with the focus area, the way Hyprland slides the workspace (`cardSlide`, on the spring): cards of the old workspace fade in coming from the focus-area side, cards of the new workspace fade out going towards it. No travel during a flight. |
-| Card click (or `flyTo` over IPC) | The Exposé flight: windows fly between their cards and their tiles. | Same as above. |
+| Card click (or `flyTo` over IPC)                 | The Exposé flight: windows fly between their cards and their tiles.                                                  | Same as above.                                                                                                                                                                                                                                                                                            |
 
 Hyprland owns the real windows, so a keyboard switch has no copies and no hand-off: every frame of the focus area is real, with its border, shadow and blur. A full `slide` would move windows across the whole monitor, over the bands (windows are drawn above them); `slidefade 10%` stays mostly in the focus area.
 
@@ -117,12 +117,12 @@ While a card is selected:
 - Return (and keypad Enter) goes to the card's window with the Exposé flight, and Escape lets go of the card. These two keys are bound only while a card is selected;
 - the keys bound to the actions below act on the card. Keys are found by action, not by key: any key bound to these actions works, also after a rebind.
 
-| Action (Omarchy's key) | No selection | Card selected |
-|------------------------|--------------|---------------|
-| `hl.dsp.window.close()` (`SUPER + W`) | Closes the active window. | Closes the card's window. |
-| `hl.dsp.window.fullscreen(…)` (`SUPER + F`, `SUPER + ALT + F`) | Fullscreens the active window. | Goes to the card's window (Hyprland switches to its workspace, no flight) and fullscreens it, in the same mode. |
-| `hl.dsp.focus({ direction = "l" / "r" })` (`SUPER + ←/→`) | Moves focus between windows. On the window at the left or right edge of the focus area (no tiled window beyond it), selects the card in that band nearest the window's height. Hyprland's own wrap-round to the other edge is skipped then. A band without cards: Hyprland's normal focus. | Moves to the nearest card that way in the same band. With no card that way, towards the focus area: focuses the focus area window on that edge nearest the card's height. |
-| `hl.dsp.focus({ direction = "u" / "d" })` (`SUPER + ↑/↓`) | Moves focus between windows. | Moves to the nearest card up or down in the same band, across groups. |
+| Action (Omarchy's key)                                         | No selection                                                                                                                                                                                                                                                                               | Card selected                                                                                                                                                             |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hl.dsp.window.close()` (`SUPER + W`)                          | Closes the active window.                                                                                                                                                                                                                                                                  | Closes the card's window.                                                                                                                                                 |
+| `hl.dsp.window.fullscreen(…)` (`SUPER + F`, `SUPER + ALT + F`) | Fullscreens the active window.                                                                                                                                                                                                                                                             | Goes to the card's window (Hyprland switches to its workspace, no flight) and fullscreens it, in the same mode.                                                           |
+| `hl.dsp.focus({ direction = "l" / "r" })` (`SUPER + ←/→`)      | Moves focus between windows. On the window at the left or right edge of the focus area (no tiled window beyond it), selects the card in that band nearest the window's height. Hyprland's own wrap-round to the other edge is skipped then. A band without cards: Hyprland's normal focus. | Moves to the nearest card that way in the same band. With no card that way, towards the focus area: focuses the focus area window on that edge nearest the card's height. |
+| `hl.dsp.focus({ direction = "u" / "d" })` (`SUPER + ↑/↓`)      | Moves focus between windows.                                                                                                                                                                                                                                                               | Moves to the nearest card up or down in the same band, across groups.                                                                                                     |
 
 The selection clears when:
 
@@ -137,10 +137,10 @@ Typed keys other than Return and Escape still reach the focus area window. The p
 
 Cards draw their border the way Hyprland draws a window's, in the current theme's style, through the shell's `Border` tokens (they follow theme changes):
 
-| Card | Border | Theme source |
-|------|--------|--------------|
-| At rest | Inactive | `[popups] border` (Omarchy themes give it Hyprland's inactive border colour) |
-| Selected, or being dragged | Active | `[hyprland] active-border`, Hyprland's active-border gradient |
+| Card                       | Border   | Theme source                                                                 |
+| -------------------------- | -------- | ---------------------------------------------------------------------------- |
+| At rest                    | Inactive | `[popups] border` (Omarchy themes give it Hyprland's inactive border colour) |
+| Selected, or being dragged | Active   | `[hyprland] active-border`, Hyprland's active-border gradient                |
 
 The width is Hyprland's `general:border_size` and the corner radius `decoration:rounding`, read from `hyprctl getoption` when the mode turns on and after every config reload (a theme switch reloads Hyprland).
 
@@ -165,14 +165,14 @@ A `hyprctl reload` starts a fresh Lua state. The plugin sends its state again on
 
 ### Pointer actions on cards
 
-| Action | Result |
-|--------|--------|
-| Hover | Selects the card (see [Periphery selection](#periphery-selection)). |
-| Click | Focus the window with the Exposé flight (see [The Exposé flight](#the-exposé-flight)). Hyprland goes to its workspace. That workspace leaves the periphery and the previous workspace enters it. |
-| Drag, drop in the focus area | Move the window to the current workspace and focus it. Dwindle tiles it next to the window under the pointer. |
-| Drag, drop on another group | Move the window to the workspace of that group. |
-| Drag, drop on empty band space | Move the window to the lowest free workspace id. |
-| Drag, drop on its own group | No change. |
+| Action                         | Result                                                                                                                                                                                           |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Hover                          | Selects the card (see [Periphery selection](#periphery-selection)).                                                                                                                              |
+| Click                          | Focus the window with the Exposé flight (see [The Exposé flight](#the-exposé-flight)). Hyprland goes to its workspace. That workspace leaves the periphery and the previous workspace enters it. |
+| Drag, drop in the focus area   | Move the window to the current workspace and focus it. Dwindle tiles it next to the window under the pointer.                                                                                    |
+| Drag, drop on another group    | Move the window to the workspace of that group.                                                                                                                                                  |
+| Drag, drop on empty band space | Move the window to the lowest free workspace id.                                                                                                                                                 |
+| Drag, drop on its own group    | No change.                                                                                                                                                                                       |
 
 During a card drag, a live copy of the window follows the pointer above all windows. The focus area or the target group gets an accent outline.
 
@@ -189,25 +189,35 @@ Hyprland does not report pointer motion during its own window drag. The plugin s
 
 ### Files
 
+The repo (`~/Projects/omarchy-periphery`) holds the source; `vp run deploy` copies `plugin/` to `~/.config/omarchy/plugins/stef.periphery/`. The shell reloads plugins on any write under that folder, so the tooling lives outside it.
+
 ```
-~/.config/omarchy/plugins/stef.periphery/
-  manifest.json    plugin kind "panel", entry Periphery.qml
-  Periphery.qml    state, layout solver, surfaces, drag and drop, selection, IPC
-  WindowCard.qml   one card: thumbnail, hover, click and drag input
-  hypr.lua         Hyprland side: wraps close, fullscreen and focus-direction for the selection
-  README.md        install: the mandatory Hyprland and shell config
-  SPEC.md          this file
+plugin/                what ships
+  manifest.json        plugin kind "panel", entry Periphery.qml
+  Periphery.qml        state, surfaces, animations, drag and drop, selection wiring, IPC
+  WindowCard.qml       one card: thumbnail, border, hover, click and drag input
+  hypr.lua             Hyprland side: wraps close, fullscreen and focus-direction for the selection
+  lib/*.mjs            vp pack output of src/, imported by Periphery.qml
+src/<module>/          pure TypeScript logic, each with specs.md, <module>.ts, <module>.test.ts
+  layout/              bands, wrap rule, card placement (specs: src/layout/specs.md)
+  selection/           focus-key navigation, drop targets (src/selection/specs.md)
+  hyprland/            animation, hook state and option strings (src/hyprland/specs.md)
+tests/hypr.test.lua    hook tests against a fake `hl`
+scripts/               verify steps, deploy, smoke
+CLAUDE.md              rules and workflow for working on the plugin
+README.md              install and development
+SPEC.md                this file
 ```
 
 ### Layer surfaces
 
 The plugin creates 4 layer surfaces on the focused monitor (the reserve surface twice). All exist only while the mode is on.
 
-| Namespace | Layer | Size | Exclusive zone | Input | Use |
-|-----------|-------|------|----------------|-------|-----|
-| `omarchy-periphery-reserve` (×2) | Bottom | 1 px wide, full height, left and right edge | `sideW` | none | Reserve the bands. |
-| `omarchy-periphery` | Bottom | full screen | ignore | bands only | Draw the groups and cards. |
-| `omarchy-periphery-fx` | Overlay | full screen | ignore | none | Draw the switch ghosts and backdrop, the dragged card and drop outlines. |
+| Namespace                        | Layer   | Size                                        | Exclusive zone | Input      | Use                                                                      |
+| -------------------------------- | ------- | ------------------------------------------- | -------------- | ---------- | ------------------------------------------------------------------------ |
+| `omarchy-periphery-reserve` (×2) | Bottom  | 1 px wide, full height, left and right edge | `sideW`        | none       | Reserve the bands.                                                       |
+| `omarchy-periphery`              | Bottom  | full screen                                 | ignore         | bands only | Draw the groups and cards.                                               |
+| `omarchy-periphery-fx`           | Overlay | full screen                                 | ignore         | none       | Draw the switch ghosts and backdrop, the dragged card and drop outlines. |
 
 Hyprland arranges layer surfaces in layer order: Background, Bottom, Top, Overlay. A surface with an exclusive zone gets the area that is left after the surfaces before it. The reserve surfaces are on the Bottom layer, so they take the bands first. The Omarchy bar is on the Top layer, so it gets only the focus area width. The bar needs no change.
 
@@ -272,29 +282,29 @@ hl.dsp.window.move({ workspace = "2", follow = false, window = "address:0x56c7bf
 
 Durations are given at `animSpeed: 1`.
 
-| Property | Default | Effect |
-|----------|---------|--------|
-| `ratio` | `1.25` | Focus area width / monitor height. |
-| `bandMargin` | `Style.space(16)` | Space between band edge and cards. |
-| `cardGap` | `Style.space(10)` | Minimum space between cards. |
-| `groupGap` | `Style.space(20)` | Space between groups. |
-| `maxStretch` | `6` | Maximum vertical stretch of a group's position map. |
-| `animSpeed` | `1` | Global animation speed. `0.25` plays all animations 4× slower (to inspect them), `2` twice as fast. Scales every duration, the switch timeouts and the springs. |
-| `workspaceStyle` | `slidefade 10%` | Hyprland's workspace animation style while the mode is on (keyboard switches), with the theme's curve and speed. |
-| `slideDuration` | `320` | Card fade-in and fade-out time in ms. |
-| `cardSlide` | 10% of the monitor width | How far arriving and leaving cards travel. Follows `workspaceStyle`: its percentage, on its axis (`vert` styles move vertically), 0 for a style that does not slide. |
-| `fadeDuration` | `150` | Ghost, drop outline and drag grow time in ms. |
-| `springStrength` | `11.2` | Qt `SpringAnimation.spring` for cards and ghosts. Matches the theme spring `spatial_default` (stiffness 700 × 16 ms step). |
-| `springDamping` | `0.65` | Qt `SpringAnimation.damping`. With `11.2`: ~340 ms, no overshoot. Lower is bouncier. Below `animSpeed` 1 it gets up to 22% extra: Qt steps springs in fixed 16 ms ticks that damp the overshoot at normal speed, and slow motion would otherwise overshoot ~2%. |
-| `ghostBlur` | `96` | Blur radius in px of the wallpaper behind ghosts. Matched by eye to `decoration:blur` size 6, 3 passes (dual-kawase has no exact radius); past 64 px it uses `blurMultiplier`. `ghostBlurContrast` (`-0.11`) and `ghostBlurSaturation` (`0.17`) match its contrast 0.89 and vibrancy 0.17. |
-| `coverBleed` | `2` | How far the switch backdrop reaches into the bands, to cover a flush window's border. At least `general:border_size`. |
-| `switchMinMs` / `switchMaxMs` | `120` / `1500` | Shortest and longest switch flight before the hand-off. |
+| Property                      | Default                  | Effect                                                                                                                                                                                                                                                                                     |
+| ----------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ratio`                       | `1.25`                   | Focus area width / monitor height.                                                                                                                                                                                                                                                         |
+| `bandMargin`                  | `Style.space(16)`        | Space between band edge and cards.                                                                                                                                                                                                                                                         |
+| `cardGap`                     | `Style.space(10)`        | Minimum space between cards.                                                                                                                                                                                                                                                               |
+| `groupGap`                    | `Style.space(20)`        | Space between groups.                                                                                                                                                                                                                                                                      |
+| `maxStretch`                  | `6`                      | Maximum vertical stretch of a group's position map.                                                                                                                                                                                                                                        |
+| `animSpeed`                   | `1`                      | Global animation speed. `0.25` plays all animations 4× slower (to inspect them), `2` twice as fast. Scales every duration, the switch timeouts and the springs.                                                                                                                            |
+| `workspaceStyle`              | `slidefade 10%`          | Hyprland's workspace animation style while the mode is on (keyboard switches), with the theme's curve and speed.                                                                                                                                                                           |
+| `slideDuration`               | `320`                    | Card fade-in and fade-out time in ms.                                                                                                                                                                                                                                                      |
+| `cardSlide`                   | 10% of the monitor width | How far arriving and leaving cards travel. Follows `workspaceStyle`: its percentage, on its axis (`vert` styles move vertically), 0 for a style that does not slide.                                                                                                                       |
+| `fadeDuration`                | `150`                    | Ghost, drop outline and drag grow time in ms.                                                                                                                                                                                                                                              |
+| `springStrength`              | `11.2`                   | Qt `SpringAnimation.spring` for cards and ghosts. Matches the theme spring `spatial_default` (stiffness 700 × 16 ms step).                                                                                                                                                                 |
+| `springDamping`               | `0.65`                   | Qt `SpringAnimation.damping`. With `11.2`: ~340 ms, no overshoot. Lower is bouncier. Below `animSpeed` 1 it gets up to 22% extra: Qt steps springs in fixed 16 ms ticks that damp the overshoot at normal speed, and slow motion would otherwise overshoot ~2%.                            |
+| `ghostBlur`                   | `96`                     | Blur radius in px of the wallpaper behind ghosts. Matched by eye to `decoration:blur` size 6, 3 passes (dual-kawase has no exact radius); past 64 px it uses `blurMultiplier`. `ghostBlurContrast` (`-0.11`) and `ghostBlurSaturation` (`0.17`) match its contrast 0.89 and vibrancy 0.17. |
+| `coverBleed`                  | `2`                      | How far the switch backdrop reaches into the bands, to cover a flush window's border. At least `general:border_size`.                                                                                                                                                                      |
+| `switchMinMs` / `switchMaxMs` | `120` / `1500`           | Shortest and longest switch flight before the hand-off.                                                                                                                                                                                                                                    |
 
 Colours and fonts come from the theme `[menu]` tokens (`Color.menu.*`, `Style.*`) and follow theme changes.
 
 ## Constraints and gotchas
 
-- **Plugin reload turns the mode off.** A save of any plugin file reloads the plugin. Press `SUPER + E` again. The hot reload is not reliable: after an edit, run `omarchy restart shell`.
+- **Plugin reload turns the mode off.** Any write under `~/.config/omarchy/plugins/` reloads the plugins, `vp run deploy` included. Press `SUPER + E` again. The hot reload is not reliable: after a deploy, run `omarchy restart shell`.
 - **Hidden workspaces keep their old tiling.** Hyprland re-tiles only the visible workspace when the reserved area changes. A workspace that was tiled at full width keeps that layout until you visit it. Its cards still show the correct relative positions.
 - **Frame rate costs GPU.** Every card captures at the screen frame rate. Many windows in the periphery increase GPU load.
 - **Floating windows keep their position.** A floating window that you drop in the focus area stays floating at its last position. It does not move to the drop point.

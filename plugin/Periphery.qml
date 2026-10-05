@@ -6,6 +6,9 @@ import QtQuick
 import QtQuick.Effects
 import qs.Commons
 import qs.Ui
+import "lib/hyprland.mjs" as Hypr
+import "lib/layout.mjs" as Layout
+import "lib/selection.mjs" as Selection
 
 // Periphery exposé, after Scott Jenson's widescreen prototype: tiling and the
 // bar are squeezed into a centred focus area (5:4 of the monitor height by
@@ -80,16 +83,11 @@ Item {
   // inside the focus area (a full slide would cross the bands, as windows
   // are drawn above them).
   readonly property string workspaceStyle: "slidefade 10%"
-  // How far arriving and leaving cards travel, along with the focus area:
-  // the distance of workspaceStyle (a % of the monitor, or all of it), on
-  // the axis it slides; 0 for a style that doesn't slide.
-  readonly property bool cardSlideVertical: /vert/.test(workspaceStyle)
-  readonly property real cardSlide: {
-    if (!/slide/.test(workspaceStyle)) return 0
-    var m = /(\d+(?:\.\d+)?)%/.exec(workspaceStyle)
-    var extent = cardSlideVertical ? monH : monW
-    return m ? extent * parseFloat(m[1]) / 100 : extent
-  }
+  // How far arriving and leaving cards travel, along with the focus area
+  // (src/hyprland/specs.md).
+  readonly property var cardTravel: Hypr.cardTravel(workspaceStyle, monW, monH)
+  readonly property bool cardSlideVertical: cardTravel.vertical
+  readonly property real cardSlide: cardTravel.distance
   // The workspace in the focus area, and which way the last switch went:
   // 1 to a higher workspace (Hyprland slides the content left or up), -1 to
   // a lower one.
@@ -97,7 +95,7 @@ Item {
   property int switchDir: 0
   // The hl.animation call for that, built from the theme's animation.
   property string hyprModeLua: 'hl.animation({ leaf = "workspaces", enabled = true, speed = 3, bezier = "default", style = "' + workspaceStyle + '" })'
-  readonly property string hyprOffLua: 'hl.animation({ leaf = "workspaces", enabled = false })'
+  readonly property string hyprOffLua: Hypr.workspacesOffLua
   property string hyprSlideRestore: ""
   // Address -> true for windows we turned the shadow off for, during a
   // card-click flight: the windows of the target workspace, whose shadows
@@ -116,11 +114,11 @@ Item {
   property bool cardsRight: false
   // The state last sent to hypr.lua, and the one to send.
   property string luaSent: ""
-  readonly property string luaState: !root.opened ? "if periphery_close then periphery_close() end"
-    : "if periphery_open then periphery_open(" + [root.cardsLeft, root.cardsRight,
-        Math.round(root.monX + root.sideW), Math.round(root.monX + root.monW - root.sideW),
-        Math.round(root.monY), Math.round(root.monY + root.monH)].join(", ")
-      + "); periphery_select(" + (root.selected ? '"' + root.selected + '"' : "nil") + ") end"
+  readonly property string luaState: Hypr.hookStateLua({
+    opened: root.opened, cardsLeft: root.cardsLeft, cardsRight: root.cardsRight,
+    monX: root.monX, monY: root.monY, monW: root.monW, monH: root.monH, sideW: root.sideW,
+    selected: root.selected,
+  })
   onLuaStateChanged: root.sendLuaState()
 
   property color background: Color.menu.background
@@ -276,55 +274,21 @@ Item {
   }
 
   // A focus key moved past the focus area's edge towards a band ("l" or
-  // "r"): select the card there nearest the active window's height.
+  // "r"), from the active window (src/selection/specs.md).
   function enterBand(dir, active) {
     if (!root.opened) return
-    var tile = root.focusRects[active] || null
-    var refY = tile ? tile.y + tile.h / 2 : root.monH / 2
-    var best = null
-    var bestD = Infinity
-    for (var a in root.winData) {
-      var c = root.winData[a]
-      if ((dir === "l") !== (c.x < root.monW / 2)) continue
-      var d = Math.abs(c.y + c.h / 2 - refY)
-      if (d < bestD) { bestD = d; best = a }
-    }
+    var best = Selection.enterBand(root.winData, dir, root.focusRects[active] || null, root.monW, root.monH)
     if (best) root.select(best, active)
   }
 
-  // A focus key on a selected card: the nearest card that way in the same
-  // band; towards the focus area with no card left, the focus area window
-  // on that edge nearest the card's height.
+  // A focus key on the selected card (src/selection/specs.md).
   function stepSelection(dir) {
-    var cur = root.winData[root.selected]
-    if (!cur) { root.clearSelection(); return }
-    var left = cur.x < root.monW / 2
-    var cx = cur.x + cur.w / 2
-    var cy = cur.y + cur.h / 2
-    var horizontal = dir === "l" || dir === "r"
-    var sign = dir === "l" || dir === "u" ? -1 : 1
-    var best = null
-    var bestScore = Infinity
-    for (var a in root.winData) {
-      var c = root.winData[a]
-      if (a === root.selected || (c.x < root.monW / 2) !== left) continue
-      var along = sign * (horizontal ? c.x + c.w / 2 - cx : c.y + c.h / 2 - cy)
-      var across = Math.abs(horizontal ? c.y + c.h / 2 - cy : c.x + c.w / 2 - cx)
-      if (along <= 1) continue
-      if (along + across * 2 < bestScore) { bestScore = along + across * 2; best = a }
-    }
-    if (best) { root.select(best); return }
-    if (dir !== (left ? "r" : "l")) return
-    var target = null
-    var targetScore = Infinity
-    for (var f in root.focusRects) {
-      var r = root.focusRects[f]
-      var edge = left ? r.x - root.sideW : root.monW - root.sideW - (r.x + r.w)
-      var off = cy < r.y ? r.y - cy : cy > r.y + r.h ? cy - r.y - r.h : 0
-      if (Math.abs(edge) + off < targetScore) { targetScore = Math.abs(edge) + off; target = f }
-    }
-    root.clearSelection()
-    if (target) root.activateWindow(target)
+    var step = Selection.stepSelection(root.winData, root.selected, dir, root.focusRects, root.monW, root.sideW)
+    if (step.kind === "select") root.select(step.address)
+    else if (step.kind === "focus") {
+      root.clearSelection()
+      if (step.address) root.activateWindow(step.address)
+    } else if (step.kind === "clear") root.clearSelection()
   }
 
   // Also runs on plugin unload, when the dispatch socket may already be
@@ -353,33 +317,14 @@ Item {
     else Quickshell.execDetached(["hyprctl", "reload", "config-only"])
   }
 
-  // `hyprctl animations -j` entry -> the hl.animation call that recreates
-  // it, or with `style` replaced.
-  function slideRestoreLua(json, style) {
-    var lists = JSON.parse(json)
-    var all = Array.isArray(lists[0]) ? lists[0] : lists
-    for (var i = 0; i < all.length; i++) {
-      var a = all[i]
-      if (a.name !== "workspaces") continue
-      if (!a.enabled && !style) return root.hyprOffLua
-      var parts = ['leaf = "workspaces"', "enabled = true", "speed = " + a.speed]
-      var curve = String(a.bezier || "")
-      if (curve.indexOf("spring:") === 0) parts.push('spring = "' + curve.slice(7) + '"')
-      else if (curve) parts.push('bezier = "' + curve + '"')
-      if (style || a.style) parts.push('style = "' + (style || a.style) + '"')
-      return "hl.animation({ " + parts.join(", ") + " })"
-    }
-    return ""
-  }
-
   Process {
     id: slideProc
     command: ["hyprctl", "animations", "-j"]
     stdout: StdioCollector {
       onStreamFinished: {
         try {
-          root.hyprSlideRestore = root.slideRestoreLua(text)
-          var mode = root.slideRestoreLua(text, root.workspaceStyle)
+          root.hyprSlideRestore = Hypr.workspaceAnimationLua(text)
+          var mode = Hypr.workspaceAnimationLua(text, root.workspaceStyle)
           if (mode) root.hyprModeLua = mode
         } catch (e) { root.hyprSlideRestore = "" }
         if (root.hyprSlideOff) Quickshell.execDetached(["hyprctl", "eval", root.hyprModeLua])
@@ -395,10 +340,9 @@ Item {
     command: ["sh", "-c", "hyprctl -j getoption general:border_size; hyprctl -j getoption decoration:rounding"]
     stdout: StdioCollector {
       onStreamFinished: {
-        var size = /"general:border_size",\s*"int":\s*(\d+)/.exec(text)
-        var rounding = /"decoration:rounding",\s*"int":\s*(\d+)/.exec(text)
-        if (size) root.windowBorder = parseInt(size[1])
-        if (rounding) root.windowRounding = parseInt(rounding[1])
+        var decoration = Hypr.parseDecoration(text)
+        if (decoration.borderSize !== undefined) root.windowBorder = decoration.borderSize
+        if (decoration.rounding !== undefined) root.windowRounding = decoration.rounding
       }
     }
   }
@@ -501,12 +445,7 @@ Item {
   }
 
   function groupAt(x, y) {
-    for (var i = 0; i < root.headers.length; i++) {
-      var g = root.headers[i]
-      if (x >= g.x - root.bandMargin && x <= g.x + g.w + root.bandMargin
-          && y >= g.y - root.groupGap / 2 && y <= g.y + g.h + root.groupGap / 2) return g
-    }
-    return null
+    return Selection.groupAt(root.headers, x, y, root.bandMargin, root.groupGap)
   }
 
   function inBand(x) {
@@ -515,13 +454,11 @@ Item {
 
   // Lowest workspace number with nothing on it, for drops on empty band.
   function freeWorkspaceId() {
-    var used = {}
+    var occupied = []
     var list = Hyprland.workspaces.values
     for (var i = 0; i < list.length; i++)
-      if (list[i].id > 0 && list[i].toplevels && list[i].toplevels.values.length > 0) used[list[i].id] = true
-    used[root.currentWorkspaceId()] = true
-    for (var id = 1; id < 100; id++) if (!used[id]) return id
-    return 100
+      if (list[i].id > 0 && list[i].toplevels && list[i].toplevels.values.length > 0) occupied.push(list[i].id)
+    return Selection.freeWorkspaceId(occupied, root.currentWorkspaceId())
   }
 
   // Sends a window to the workspace group under (x, y) in a band, or to a
@@ -610,7 +547,7 @@ Item {
   function rebuild() {
     if (!root.opened) return
     var current = root.currentWorkspaceId()
-    var byWs = {}
+    var others = []
     var focus = {}
     var toplevels = Hyprland.toplevels.values
     for (var i = 0; i < toplevels.length; i++) {
@@ -620,22 +557,22 @@ Item {
       if (ipc.mapped === false || ipc.hidden === true) continue
       if (root.monId >= 0 && ipc.monitor !== undefined && ipc.monitor !== root.monId) continue
       var wsId = ipc.workspace.id
+      var address = normalizeAddress(ipc.address || t.address)
       if (wsId === current) {
-        var fa = normalizeAddress(ipc.address || t.address)
-        focus[fa] = { address: fa, toplevel: t, fullscreen: !!ipc.fullscreen,
-                      x: ipc.at[0] - root.monX, y: ipc.at[1] - root.monY,
-                      w: Math.max(1, ipc.size[0]), h: Math.max(1, ipc.size[1]) }
+        focus[address] = { address: address, toplevel: t, fullscreen: !!ipc.fullscreen,
+                           x: ipc.at[0] - root.monX, y: ipc.at[1] - root.monY,
+                           w: Math.max(1, ipc.size[0]), h: Math.max(1, ipc.size[1]) }
         continue
       }
       if (wsId <= 0) continue
-      if (!byWs[wsId]) byWs[wsId] = { id: wsId, label: String(ipc.workspace.name || wsId), windows: [] }
-      byWs[wsId].windows.push({
+      others.push({
         toplevel: t,
-        address: normalizeAddress(ipc.address || t.address),
+        address: address,
         title: ipc.title || t.title || "",
         appClass: ipc["class"] || "",
         floating: !!ipc.floating,
         wsId: wsId,
+        wsName: String(ipc.workspace.name || wsId),
         rx: ipc.at[0],
         ry: ipc.at[1],
         rw: Math.max(1, ipc.size[0]),
@@ -643,174 +580,28 @@ Item {
       })
     }
 
-    var ids = Object.keys(byWs).map(Number).sort(function(a, b) { return a - b })
-    for (var g = 0; g < ids.length; g++) {
-      // Reading order: tiled left-to-right then top-to-bottom, floating last.
-      byWs[ids[g]].windows.sort(function(a, b) {
-        if (a.floating !== b.floating) return a.floating ? 1 : -1
-        if (Math.abs(a.rx - b.rx) > 4) return a.rx - b.rx
-        return a.ry - b.ry
-      })
-    }
-    var left = ids.filter(function(id) { return id < current })
-    var right = ids.filter(function(id) { return id > current })
-    // On the first workspace the last one wraps round to the left, and on
-    // the last workspace the first one wraps round to the right.
-    if (left.length === 0 && right.length >= 2) left.push(right.pop())
-    else if (right.length === 0 && left.length >= 2) right.push(left.shift())
-
-    var signature = JSON.stringify([root.sideW, current, left, right, ids.map(function(id) {
-      return byWs[id].windows.map(function(w) { return [w.address, w.title, w.rx, w.ry, w.rw, w.rh] })
+    others.sort(function(a, b) { return a.address < b.address ? -1 : a.address > b.address ? 1 : 0 })
+    var signature = JSON.stringify([root.sideW, current, others.map(function(w) {
+      return [w.address, w.wsId, w.wsName, w.title, w.floating, w.rx, w.ry, w.rw, w.rh]
     }), Object.keys(focus).map(function(a) { var f = focus[a]; return [a, f.fullscreen, f.x, f.y, f.w, f.h] })])
     if (signature === root.layoutSignature) return
     root.layoutSignature = signature
     root.focusRects = focus
 
-    var wins = {}
-    var headers = []
-    placeSide(left.map(function(id) { return byWs[id] }), root.bandMargin, wins, headers)
-    placeSide(right.map(function(id) { return byWs[id] }), root.monW - root.sideW + root.bandMargin, wins, headers)
-    root.winData = wins
-    root.headers = headers
-    if (root.selected && !wins[root.selected]) root.clearSelection()
-    root.cardsLeft = left.length > 0
-    root.cardsRight = right.length > 0
-    syncSlots(Object.keys(wins))
+    // See src/layout/specs.md.
+    var layout = Layout.layoutBands(others, current, {
+      monW: root.monW, monH: root.monH, sideW: root.sideW, bandMargin: root.bandMargin,
+      cardGap: root.cardGap, groupGap: root.groupGap, headerHeight: root.headerHeight,
+      maxStretch: root.maxStretch,
+    })
+    root.winData = layout.cards
+    root.headers = layout.headers
+    if (root.selected && !layout.cards[root.selected]) root.clearSelection()
+    root.cardsLeft = layout.left.length > 0
+    root.cardsRight = layout.right.length > 0
+    syncSlots(Object.keys(layout.cards))
     // Ghosts for every window on the monitor, band or focus area.
-    syncModel(ghosts, Object.keys(wins).concat(Object.keys(focus)))
-  }
-
-  // Expose-style placement that keeps windows near their real relative
-  // positions. Each group gets a slice of the band; window centres are
-  // mapped from the group's bounding box into that slice (stretched
-  // vertically up to maxStretch to use the tall band), then cards at a
-  // shared scale are nudged apart until none overlap. The scale is the
-  // largest at which every group of this side resolves.
-  function placeSide(groups, bandX, wins, headers) {
-    if (groups.length === 0) return
-    var bandW = root.sideW - root.bandMargin * 2
-    var availH = root.monH - root.bandMargin * 2
-      - groups.length * root.headerHeight - (groups.length - 1) * root.groupGap
-
-    // Group bounding boxes and their height when mapped at band width.
-    var natural = 0
-    for (var g = 0; g < groups.length; g++) {
-      var ws = groups[g].windows
-      var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
-      for (var i = 0; i < ws.length; i++) {
-        x0 = Math.min(x0, ws[i].rx); y0 = Math.min(y0, ws[i].ry)
-        x1 = Math.max(x1, ws[i].rx + ws[i].rw); y1 = Math.max(y1, ws[i].ry + ws[i].rh)
-      }
-      groups[g].box = { x: x0, y: y0, w: Math.max(1, x1 - x0), h: Math.max(1, y1 - y0) }
-      groups[g].naturalH = bandW * groups[g].box.h / groups[g].box.w
-      natural += groups[g].naturalH
-    }
-    var stretch = Math.min(root.maxStretch, availH / natural)
-    var bodies = groups.map(function(group) { return group.naturalH * stretch })
-    var used = bodies.reduce(function(a, b) { return a + b }, 0)
-      + groups.length * root.headerHeight + (groups.length - 1) * root.groupGap
-    var top = (root.monH - used) / 2
-
-    var regions = []
-    var y = top
-    for (var r = 0; r < groups.length; r++) {
-      regions.push({ x: bandX, y: y + root.headerHeight, w: bandW, h: bodies[r] })
-      y += root.headerHeight + bodies[r] + root.groupGap
-    }
-
-    var lo = 0.02
-    var hi = 1
-    for (var k = 0; k < groups.length; k++)
-      for (var m = 0; m < groups[k].windows.length; m++)
-        hi = Math.min(hi, bandW / groups[k].windows[m].rw, bodies[k] / groups[k].windows[m].rh)
-    var best = null
-    for (var iter = 0; iter < 16; iter++) {
-      var mid = (lo + hi) / 2
-      var trial = []
-      var ok = true
-      for (var t = 0; t < groups.length && ok; t++) {
-        var placed = root.resolve(groups[t], regions[t], mid)
-        if (!placed) ok = false
-        else trial.push(placed)
-      }
-      if (ok) { lo = mid; best = trial } else hi = mid
-    }
-    if (!best) {
-      best = []
-      for (var f = 0; f < groups.length; f++) best.push(root.resolve(groups[f], regions[f], lo, true))
-    }
-
-    for (var h = 0; h < groups.length; h++) {
-      // The label sits just above the group's topmost card.
-      var minY = Infinity, maxY = -Infinity
-      for (var e = 0; e < best[h].length; e++) {
-        minY = Math.min(minY, best[h][e].y)
-        maxY = Math.max(maxY, best[h][e].y + best[h][e].h)
-      }
-      headers.push({ id: groups[h].id, label: groups[h].label, x: bandX, y: minY - root.headerHeight,
-                     w: bandW, h: maxY - minY + root.headerHeight })
-      for (var c = 0; c < best[h].length; c++) wins[best[h][c].address] = best[h][c]
-    }
-  }
-
-  // Places one group's cards at `scale` inside `region`, starting from their
-  // mapped positions and pushing overlapping pairs apart along the shallower
-  // axis (or the other one when both cards sit against that axis's walls).
-  // Returns the cards, or null when they can't be separated.
-  function resolve(group, region, scale, force) {
-    var box = group.box
-    var gap = root.cardGap
-    var cards = group.windows.map(function(w) {
-      var cw = w.rw * scale
-      var ch = w.rh * scale
-      return {
-        address: w.address, toplevel: w.toplevel, title: w.title, appClass: w.appClass, wsId: w.wsId,
-        w: cw, h: ch,
-        cx: region.x + ((w.rx + w.rw / 2 - box.x) / box.w) * region.w,
-        cy: region.y + ((w.ry + w.rh / 2 - box.y) / box.h) * region.h,
-      }
-    })
-    function clamp(c) {
-      c.cx = Math.max(region.x + c.w / 2, Math.min(region.x + region.w - c.w / 2, c.cx))
-      c.cy = Math.max(region.y + c.h / 2, Math.min(region.y + region.h - c.h / 2, c.cy))
-    }
-    cards.forEach(clamp)
-
-    var clear = false
-    for (var pass = 0; pass < 120 && !clear; pass++) {
-      clear = true
-      for (var i = 0; i < cards.length; i++) {
-        for (var j = i + 1; j < cards.length; j++) {
-          var a = cards[i], b = cards[j]
-          var dx = b.cx - a.cx, dy = b.cy - a.cy
-          var ox = (a.w + b.w) / 2 + gap - Math.abs(dx)
-          var oy = (a.h + b.h) / 2 + gap - Math.abs(dy)
-          if (ox <= 0.5 || oy <= 0.5) continue
-          clear = false
-          // Ties keep reading order: the earlier window goes left/up.
-          var sx = dx > 0 || (dx === 0 && i < j) ? 1 : -1
-          var sy = dy > 0 || (dy === 0 && i < j) ? 1 : -1
-          var xRoom = (a.cx - a.w / 2 - region.x) * (sx > 0 ? 1 : 0) + (region.x + region.w - a.cx - a.w / 2) * (sx < 0 ? 1 : 0)
-                    + (region.x + region.w - b.cx - b.w / 2) * (sx > 0 ? 1 : 0) + (b.cx - b.w / 2 - region.x) * (sx < 0 ? 1 : 0)
-          var yRoom = (a.cy - a.h / 2 - region.y) * (sy > 0 ? 1 : 0) + (region.y + region.h - a.cy - a.h / 2) * (sy < 0 ? 1 : 0)
-                    + (region.y + region.h - b.cy - b.h / 2) * (sy > 0 ? 1 : 0) + (b.cy - b.h / 2 - region.y) * (sy < 0 ? 1 : 0)
-          // Prefer the shallower axis if there's room to separate along it,
-          // else whichever axis has room, else the one with more of it.
-          var canX = xRoom >= ox - 0.5
-          var canY = yRoom >= oy - 0.5
-          var useX = canX && canY ? ox <= oy : canX || canY ? canX : xRoom / ox >= yRoom / oy
-          if (useX) { a.cx -= sx * ox / 2; b.cx += sx * ox / 2 }
-          else { a.cy -= sy * oy / 2; b.cy += sy * oy / 2 }
-          clamp(a)
-          clamp(b)
-        }
-      }
-    }
-    if (!clear && !force) return null
-    return cards.map(function(c) {
-      return { address: c.address, toplevel: c.toplevel, title: c.title, appClass: c.appClass, wsId: c.wsId,
-               x: c.cx - c.w / 2, y: c.cy - c.h / 2, w: c.w, h: c.h }
-    })
+    syncModel(ghosts, Object.keys(layout.cards).concat(Object.keys(focus)))
   }
 
   // Keeps one delegate per window alive across rebuilds: a card whose

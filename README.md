@@ -22,7 +22,7 @@ if io.open(periphery_hook) then dofile(periphery_hook) end
 
 [`hypr.lua`](hypr.lua) wraps three Hyprland actions: `hl.dsp.window.close()`, `hl.dsp.window.fullscreen()` and `hl.dsp.focus({ direction = … })`. Every key bound to one of these after the hook loads first checks for a selected card. That covers Omarchy's `SUPER + W`, `SUPER + F` and `SUPER + arrows`, and any key you bind to these actions yourself, now or later. When the mode is off, the wrapped actions behave exactly like the native ones.
 
-**Why here, and not in `bindings.lua` or the theme:** Hyprland binds are opaque, so the plugin can't find out which key does what. It can only wrap the actions before the binds are made. `~/.config/hypr/bindings.lua` and the theme's `hyprland.lua` both load *after* Omarchy's bindings. By then `SUPER + W`, `SUPER + F` and the arrows are already bound to the native actions, and wrapping does nothing for them.
+**Why here, and not in `bindings.lua` or the theme:** Hyprland binds are opaque, so the plugin can't find out which key does what. It can only wrap the actions before the binds are made. `~/.config/hypr/bindings.lua` and the theme's `hyprland.lua` both load _after_ Omarchy's bindings. By then `SUPER + W`, `SUPER + F` and the arrows are already bound to the native actions, and wrapping does nothing for them.
 
 Run `hyprctl reload` once after adding the lines.
 
@@ -63,3 +63,19 @@ hyprctl monitors -j | jq '.[].reserved'         # [380, 26, 380, 0] with the mod
 ```
 
 Hover a card: it gets your theme's active border, and the active window's border turns inactive. `SUPER + W` now closes the card's window, not the window in the focus area. Enter goes to it.
+
+## Development
+
+The source lives in its own repo, outside the plugin folder: the shell reloads plugins on any write under `~/.config/omarchy/plugins/`. Tooling is [Vite+](https://viteplus.dev) (`vp`): Oxfmt, Oxlint with type checking, Vitest, and tsdown for the bundles.
+
+```bash
+git clone https://github.com/stefvw93/omarchy-periphery.git ~/Projects/omarchy-periphery
+cd ~/Projects/omarchy-periphery
+vp install && vp config   # dependencies, git hooks
+vp run verify             # format, lint + types, tests, bundles, QML lint, Lua tests
+vp run deploy             # pack and copy plugin/ into ~/.config/omarchy/plugins/stef.periphery
+omarchy restart shell
+vp run smoke              # live checks against the running session
+```
+
+The logic is TypeScript in `src/<module>/` (spec, code, tests), bundled to `plugin/lib/*.mjs` for the QML to import. [CLAUDE.md](CLAUDE.md) has the workflow: spec → `declare` → failing tests → implementation → `vp run verify`.

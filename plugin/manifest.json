@@ -5,9 +5,7 @@
   "version": "1.0.0",
   "author": "Stef",
   "description": "Compacts tiling and the bar into a centred focus area and shows the other workspaces as live miniatures in the side bands",
-  "kinds": [
-    "panel"
-  ],
+  "kinds": ["panel"],
   "entryPoints": {
     "panel": "Periphery.qml"
   }
