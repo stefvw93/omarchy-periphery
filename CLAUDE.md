@@ -72,4 +72,4 @@ The hooks enforce it: a Claude Code `Stop` hook runs `verify` and sends me back 
 
 - Commit on my own once a change is done and `vp run verify` is green: one commit per coherent change. Push only when the user asks.
 - Message style as in the history: a short summary line, then a plain paragraph on what and why. No attribution lines.
-- The branches compare two approaches (see SPEC.md); check which one is checked out before changing anything.
+- `native-switch` is the line of work: all changes go there. `main` (ghost flight on every switch) and `planned-flight` (keys rebound, crossfade) are earlier approaches, kept for reference, without this tooling. Don't port to them unless asked.
