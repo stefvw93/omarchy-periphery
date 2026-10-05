@@ -1,4 +1,3 @@
-import Quickshell
 import Quickshell.Wayland
 import QtQuick
 import qs.Commons
@@ -8,6 +7,8 @@ import qs.Ui
 // Hovering selects it (the close and fullscreen keys then act on it). Click
 // focuses it (switching workspace); dragging it into the focus area moves it
 // onto the current workspace, onto another workspace group moves it there.
+// Lines marked `qmllint disable missing-property` read the untyped theme
+// singleton Style.
 Item {
   id: card
 
@@ -20,19 +21,19 @@ Item {
 
   Rectangle {
     anchors.fill: parent
-    radius: host.windowRounding
-    color: host.background
+    radius: card.host.windowRounding
+    color: card.host.background
     visible: !thumb.hasContent
 
     Text {
       anchors.centerIn: parent
-      width: parent.width - Style.spacing.sm * 2
+      width: parent.width - Style.spacing.sm * 2 // qmllint disable missing-property
       textFormat: Text.PlainText
       text: card.win.appClass
-      color: host.foreground
+      color: card.host.foreground
       opacity: 0.7
-      font.family: host.fontFamily
-      font.pixelSize: Style.font.caption
+      font.family: card.host.fontFamily
+      font.pixelSize: Style.font.caption // qmllint disable missing-property
       horizontalAlignment: Text.AlignHCenter
       elide: Text.ElideRight
     }
@@ -41,35 +42,35 @@ Item {
   ScreencopyView {
     id: thumb
     anchors.fill: parent
-    captureSource: host.opened && card.win.toplevel ? card.win.toplevel.wayland : null
-    live: host.opened
+    captureSource: card.host.opened && card.win.toplevel ? card.win.toplevel.wayland : null
+    live: card.host.opened
   }
 
   // The window's border, as Hyprland would draw it: active when selected.
   BorderOverlay {
-    borderSpec: card.selected ? host.activeBorder : host.inactiveBorder
-    radius: host.windowRounding
+    borderSpec: card.selected ? card.host.activeBorder : card.host.inactiveBorder
+    radius: card.host.windowRounding
   }
 
   Rectangle {
     visible: card.selected
     anchors.horizontalCenter: parent.horizontalCenter
     anchors.bottom: parent.bottom
-    anchors.bottomMargin: Style.spacing.sm
-    width: Math.min(parent.width - Style.spacing.sm * 2, label.implicitWidth + Style.spacing.md * 2)
-    height: label.implicitHeight + Style.spacing.xs * 2
-    radius: host.cornerRadius
-    color: host.background
+    anchors.bottomMargin: Style.spacing.sm // qmllint disable missing-property
+    width: Math.min(parent.width - Style.spacing.sm * 2, label.implicitWidth + Style.spacing.md * 2) // qmllint disable missing-property
+    height: label.implicitHeight + Style.spacing.xs * 2 // qmllint disable missing-property
+    radius: card.host.cornerRadius
+    color: card.host.background
 
     Text {
       id: label
       anchors.centerIn: parent
-      width: Math.min(implicitWidth, parent.width - Style.spacing.md * 2)
+      width: Math.min(implicitWidth, parent.width - Style.spacing.md * 2) // qmllint disable missing-property
       textFormat: Text.PlainText
       text: card.win.title || card.win.appClass
-      color: host.selectedText
-      font.family: host.fontFamily
-      font.pixelSize: Style.font.caption
+      color: card.host.selectedText
+      font.family: card.host.fontFamily
+      font.pixelSize: Style.font.caption // qmllint disable missing-property
       elide: Text.ElideRight
     }
   }
@@ -89,31 +90,31 @@ Item {
     }
     // Pointer input selects the card, also after the focus keys moved the
     // selection away while the pointer stayed here (latest input wins).
-    onEntered: host.select(card.win.address)
+    onEntered: card.host.select(card.win.address)
     onPositionChanged: function(event) {
       if (!pressed) {
-        if (!card.selected) host.select(card.win.address)
+        if (!card.selected) card.host.select(card.win.address)
         return
       }
       var p = mapToItem(null, event.x, event.y)
       if (!moved && Math.abs(event.x - pressAt.x) + Math.abs(event.y - pressAt.y) < 8) return
       if (!moved) {
         moved = true
-        host.beginDrag(card.win, card.width, card.height, pressAt.x, pressAt.y)
+        card.host.beginDrag(card.win, card.width, card.height, pressAt.x, pressAt.y)
       }
-      host.updateDrag(p.x, p.y)
+      card.host.updateDrag(p.x, p.y)
     }
     onReleased: function(event) {
       if (moved) {
         var p = mapToItem(null, event.x, event.y)
-        host.endDrag(p.x, p.y)
+        card.host.endDrag(p.x, p.y)
       } else {
-        host.flyTo(card.win.address)
+        card.host.flyTo(card.win.address)
       }
       moved = false
     }
     onCanceled: {
-      if (moved) host.cancelDrag()
+      if (moved) card.host.cancelDrag()
       moved = false
     }
   }

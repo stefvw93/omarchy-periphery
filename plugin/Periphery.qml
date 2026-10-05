@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Io
@@ -6,6 +8,9 @@ import QtQuick
 import QtQuick.Effects
 import qs.Commons
 import qs.Ui
+// Lines marked `qmllint disable missing-property` read the untyped theme
+// singletons (Color, Style) or the lib/*.mjs bundles, which qmllint can't see
+// into; `uncreatable-type` is Quickshell's PanelWindow, created as intended.
 import "lib/hyprland.mjs" as Hypr
 import "lib/layout.mjs" as Layout
 import "lib/selection.mjs" as Selection
@@ -85,7 +90,7 @@ Item {
   readonly property string workspaceStyle: "slidefade 10%"
   // How far arriving and leaving cards travel, along with the focus area
   // (src/hyprland/specs.md).
-  readonly property var cardTravel: Hypr.cardTravel(workspaceStyle, monW, monH)
+  readonly property var cardTravel: Hypr.cardTravel(workspaceStyle, monW, monH) // qmllint disable missing-property
   readonly property bool cardSlideVertical: cardTravel.vertical
   readonly property real cardSlide: cardTravel.distance
   // The workspace in the focus area, and which way the last switch went:
@@ -114,17 +119,17 @@ Item {
   property bool cardsRight: false
   // The state last sent to hypr.lua, and the one to send.
   property string luaSent: ""
-  readonly property string luaState: Hypr.hookStateLua({
+  readonly property string luaState: Hypr.hookStateLua({ // qmllint disable missing-property
     opened: root.opened, cardsLeft: root.cardsLeft, cardsRight: root.cardsRight,
     monX: root.monX, monY: root.monY, monW: root.monW, monH: root.monH, sideW: root.sideW,
     selected: root.selected,
   })
   onLuaStateChanged: root.sendLuaState()
 
-  property color background: Color.menu.background
-  property color foreground: Color.menu.text
-  property color border: Color.menu.border
-  property color selectedText: Color.menu.selectedText
+  property color background: Color.menu.background // qmllint disable missing-property
+  property color foreground: Color.menu.text // qmllint disable missing-property
+  property color border: Color.menu.border // qmllint disable missing-property
+  property color selectedText: Color.menu.selectedText // qmllint disable missing-property
   property color accent: Color.accent
   readonly property int cornerRadius: Style.cornerRadius
   // Cards are drawn like windows, in the theme's border: the inactive border
@@ -135,12 +140,12 @@ Item {
   property int windowRounding: 0
   readonly property var activeBorder: Border.hyprlandActiveSpec(root.accent, root.windowBorder)
   readonly property var inactiveBorder: Border.surfaceSpec("popups", "border", root.border, root.windowBorder)
-  property string fontFamily: Style.font.menuFamily
+  property string fontFamily: Style.font.menuFamily // qmllint disable missing-property
 
   readonly property int bandMargin: Style.space(16)
   readonly property int cardGap: Style.space(10)
   readonly property int groupGap: Style.space(20)
-  readonly property int headerHeight: Style.font.body + Style.spacing.sm * 2
+  readonly property int headerHeight: Style.font.body + Style.spacing.sm * 2 // qmllint disable missing-property
   // How far a group's map may stretch vertically to use a tall band.
   readonly property real maxStretch: 6
   // Global animation speed: 1 is normal, 0.25 plays every animation 4x
@@ -277,13 +282,13 @@ Item {
   // "r"), from the active window (src/selection/specs.md).
   function enterBand(dir, active) {
     if (!root.opened) return
-    var best = Selection.enterBand(root.winData, dir, root.focusRects[active] || null, root.monW, root.monH)
+    var best = Selection.enterBand(root.winData, dir, root.focusRects[active] || null, root.monW, root.monH) // qmllint disable missing-property
     if (best) root.select(best, active)
   }
 
   // A focus key on the selected card (src/selection/specs.md).
   function stepSelection(dir) {
-    var step = Selection.stepSelection(root.winData, root.selected, dir, root.focusRects, root.monW, root.sideW)
+    var step = Selection.stepSelection(root.winData, root.selected, dir, root.focusRects, root.monW, root.sideW) // qmllint disable missing-property
     if (step.kind === "select") root.select(step.address)
     else if (step.kind === "focus") {
       root.clearSelection()
@@ -323,15 +328,15 @@ Item {
     stdout: StdioCollector {
       onStreamFinished: {
         try {
-          root.hyprSlideRestore = Hypr.workspaceAnimationLua(text)
-          var mode = Hypr.workspaceAnimationLua(text, root.workspaceStyle)
+          root.hyprSlideRestore = Hypr.workspaceAnimationLua(text) // qmllint disable missing-property
+          var mode = Hypr.workspaceAnimationLua(text, root.workspaceStyle) // qmllint disable missing-property
           if (mode) root.hyprModeLua = mode
         } catch (e) { root.hyprSlideRestore = "" }
         if (root.hyprSlideOff) Quickshell.execDetached(["hyprctl", "eval", root.hyprModeLua])
       }
     }
     // The mode went off before the slide was disabled: put it back now.
-    onExited: if (!root.hyprSlideOff) { root.hyprSlideOff = true; root.restoreHyprSlide() }
+    onRunningChanged: if (!running && !root.hyprSlideOff) { root.hyprSlideOff = true; root.restoreHyprSlide() }
   }
 
   // Hyprland's border width and rounding, for the cards.
@@ -340,7 +345,7 @@ Item {
     command: ["sh", "-c", "hyprctl -j getoption general:border_size; hyprctl -j getoption decoration:rounding"]
     stdout: StdioCollector {
       onStreamFinished: {
-        var decoration = Hypr.parseDecoration(text)
+        var decoration = Hypr.parseDecoration(text) // qmllint disable missing-property
         if (decoration.borderSize !== undefined) root.windowBorder = decoration.borderSize
         if (decoration.rounding !== undefined) root.windowRounding = decoration.rounding
       }
@@ -445,7 +450,7 @@ Item {
   }
 
   function groupAt(x, y) {
-    return Selection.groupAt(root.headers, x, y, root.bandMargin, root.groupGap)
+    return Selection.groupAt(root.headers, x, y, root.bandMargin, root.groupGap) // qmllint disable missing-property
   }
 
   function inBand(x) {
@@ -458,7 +463,7 @@ Item {
     var list = Hyprland.workspaces.values
     for (var i = 0; i < list.length; i++)
       if (list[i].id > 0 && list[i].toplevels && list[i].toplevels.values.length > 0) occupied.push(list[i].id)
-    return Selection.freeWorkspaceId(occupied, root.currentWorkspaceId())
+    return Selection.freeWorkspaceId(occupied, root.currentWorkspaceId()) // qmllint disable missing-property
   }
 
   // Sends a window to the workspace group under (x, y) in a band, or to a
@@ -589,7 +594,7 @@ Item {
     root.focusRects = focus
 
     // See src/layout/specs.md.
-    var layout = Layout.layoutBands(others, current, {
+    var layout = Layout.layoutBands(others, current, { // qmllint disable missing-property
       monW: root.monW, monH: root.monH, sideW: root.sideW, bandMargin: root.bandMargin,
       cardGap: root.cardGap, groupGap: root.groupGap, headerHeight: root.headerHeight,
       maxStretch: root.maxStretch,
@@ -789,7 +794,7 @@ Item {
 
   // Reserves a side band. 1px wide and input-transparent: only its exclusive
   // zone matters.
-  component Reserve: PanelWindow {
+  component Reserve: PanelWindow { // qmllint disable uncreatable-type
     visible: root.opened && root.sideW > 0
     screen: root.targetScreen
     implicitWidth: 1
@@ -805,7 +810,7 @@ Item {
   Reserve { anchors { top: true; bottom: true; left: true } }
   Reserve { anchors { top: true; bottom: true; right: true } }
 
-  PanelWindow {
+  PanelWindow { // qmllint disable uncreatable-type
     id: stage
     visible: root.opened && root.sideW > 0
     screen: root.targetScreen
@@ -841,7 +846,7 @@ Item {
         color: root.foreground
         opacity: 0.8
         font.family: root.fontFamily
-        font.pixelSize: Style.font.body
+        font.pixelSize: Style.font.body // qmllint disable missing-property
         font.bold: true
       }
     }
@@ -911,7 +916,7 @@ Item {
   // Above everything: the switch ghosts over a wallpaper backdrop, and the
   // dragged card with its drop hints. Mapped for as long as the mode is on,
   // so a switch draws its first frame without waiting for a new surface.
-  PanelWindow {
+  PanelWindow { // qmllint disable uncreatable-type
     visible: root.opened && root.sideW > 0
     screen: root.targetScreen
     anchors { top: true; bottom: true; left: true; right: true }

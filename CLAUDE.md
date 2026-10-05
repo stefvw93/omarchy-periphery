@@ -47,7 +47,7 @@ When a test disagrees with the spec, fix the test. When the spec disagrees with 
 | `vp test run`             | Vitest, `src/**/*.test.ts`.                                |
 | `vp run pack:fresh`       | `plugin/lib/` matches a fresh `vp pack`.                   |
 | `scripts/bundle-check.sh` | Every bundle loads in Quickshell's QML engine (offscreen). |
-| `vp run qml`              | Qt 6 qmllint on `plugin/*.qml`. Report only, for now.      |
+| `vp run qml`              | Qt 6 qmllint on `plugin/*.qml`. Any warning fails.         |
 | `vp run lua`              | `luac -p` on the hook, then `tests/*.test.lua`.            |
 
 The hooks enforce it: a Claude Code `Stop` hook runs `verify` and sends me back while it fails; the git `pre-commit` hook (`.vite-hooks/pre-commit`) runs `vp staged` and `verify`.
@@ -55,6 +55,7 @@ The hooks enforce it: a Claude Code `Stop` hook runs `verify` and sends me back 
 ## Code style
 
 - TypeScript: Oxfmt with no semicolons, double quotes, 2 spaces, 100 columns. `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`.
+- QML: `pragma ComponentBehavior: Bound`; qualify ids (`root.x`, `card.host.x`), never rely on scope lookup. A line qmllint can't type (theme singletons, `lib/*.mjs` calls, `PanelWindow`) gets a same-line `// qmllint disable <category>`, nothing broader.
 - QML: hand-formatted, no formatter. 2 spaces, no semicolons, compact one-line functions where they fit. Match the surrounding code.
 - Lua: match `plugin/hypr.lua`.
 - Comments say why, not what. Match the comment density of the file.
