@@ -13,6 +13,8 @@ A focus key past the left or right edge of the focus area (`l` or `r`) selects a
 A focus key (`l`, `r`, `u`, `d`) on a selected card:
 
 1. **Next card.** Among the other cards in the same band whose centre lies more than 1 px that way from the selected card's centre, pick the one with the lowest score: distance along the direction + 2 × distance across it (centre to centre). The selection moves there.
+   - For `l` and `r`, only cards beside the selected card count: their vertical extent overlaps its own. A card further up or down is reached with `u` and `d`, never with `l` or `r`.
+   - For `u` and `d`, any card that way counts.
 2. **Back to the focus area.** With no card that way, and the direction pointing at the focus area (`r` in the left band, `l` in the right band): the focus area window on that edge nearest the card's height gets the focus, and the selection clears. Score per tile: distance from the tile's edge to the band edge + the vertical distance from the card's centre to the tile (0 when the centre is within the tile's height). No tiles: the selection clears and nothing gets the focus.
 3. **Otherwise** the selection stays.
 

@@ -58,10 +58,19 @@ describe("stepSelection", () => {
     expect(step("R1", "d")).toEqual({ kind: "select", address: "R2" })
   })
 
-  // Any card whose centre lies more than 1 px that way counts, however far
-  // across: L2's centre is 24 px right of L1's.
-  it("counts a card barely that way, far across", () => {
-    expect(step("L1", "r")).toEqual({ kind: "select", address: "L2" })
+  // L2's centre is 24 px right of L1's, but 400 px lower: not beside it.
+  it("moves left or right only to a card beside the selected one", () => {
+    expect(step("L1", "r")).toEqual({ kind: "focus", address: "A" })
+    expect(step("L1", "l")).toEqual({ kind: "stay" })
+    expect(step("L4", "l")).toEqual({ kind: "select", address: "L3" })
+  })
+
+  it("counts a partial vertical overlap as beside", () => {
+    const shifted = { ...cards, L5: { x: 200, y: 250, w: 150, h: 100 } } // y 250–350 overlaps L1's 100–300
+    expect(stepSelection(shifted, "L1", "r", tiles, monW, sideW)).toEqual({
+      kind: "select",
+      address: "L5",
+    })
   })
 
   it("stays within the band", () => {

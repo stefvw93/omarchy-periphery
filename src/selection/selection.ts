@@ -66,6 +66,8 @@ export function stepSelection(
   let bestScore = Infinity
   for (const [address, c] of Object.entries(cards)) {
     if (address === selected || c.x < monW / 2 !== left) continue
+    // Left and right only reach a card beside this one.
+    if (horizontal && (c.y >= cur.y + cur.h || c.y + c.h <= cur.y)) continue
     const along = sign * (horizontal ? centreX(c) - cx : centreY(c) - cy)
     const across = Math.abs(horizontal ? centreY(c) - cy : centreX(c) - cx)
     if (along <= 1) continue

@@ -29,6 +29,7 @@ function stepSelection(cards, selected, dir, tiles, monW, sideW) {
 	let bestScore = Infinity;
 	for (const [address, c] of Object.entries(cards)) {
 		if (address === selected || c.x < monW / 2 !== left) continue;
+		if (horizontal && (c.y >= cur.y + cur.h || c.y + c.h <= cur.y)) continue;
 		const along = sign * (horizontal ? centreX(c) - cx : centreY(c) - cy);
 		const across = Math.abs(horizontal ? centreY(c) - cy : centreX(c) - cx);
 		if (along <= 1) continue;
