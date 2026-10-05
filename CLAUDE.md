@@ -72,4 +72,4 @@ The hooks enforce it: a Claude Code `Stop` hook runs `verify` and sends me back 
 
 - Commit on my own once a change is done and `vp run verify` is green: one commit per coherent change. Push only when the user asks.
 - Message style as in the history: a short summary line, then a plain paragraph on what and why. No attribution lines.
-- `native-switch` is the line of work: all changes go there. `main` (ghost flight on every switch) and `planned-flight` (keys rebound, crossfade) are earlier approaches, kept for reference, without this tooling. Don't port to them unless asked.
+- Work on `main`; branch for a change only when the user asks. Keyboard switches are Hyprland's animation and card clicks fly (formerly the `native-switch` experiment). `planned-flight` (keys rebound to the plugin, crossfade hand-off) is an earlier approach kept for reference, without this tooling; the first approach (a ghost flight on every switch) is `e04a8cb` in main's history. Don't port to them unless asked.
